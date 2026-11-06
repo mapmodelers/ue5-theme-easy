@@ -4,7 +4,7 @@
 
 **Clean, compact, high-clarity editor theme. Dark by default, Light included.**
 
-![Easy Theme for Unreal Engine, Dark and Light](docs/media/social.png)
+![Easy Theme for Unreal Engine](docs/media/social.png)
 
 ![Easy Theme, Dark](docs/media/dark.png)
 
