@@ -28,6 +28,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\_tools\fix_uplugin.p
 rem 4. install into the test project
 robocopy "%ROOT%\_build\EasyTheme" "%ROOT%\TestProject\Plugins\EasyTheme" /MIR /NFL /NDL /NJH /NJS /NP > "%RUN%\install.log"
 if %errorlevel% GEQ 8 goto :installfail
+mkdir "%ROOT%\TestProject\Plugins\EasyTheme\Updater" 2>nul
+copy /y "%ROOT%\_tools\updater\EasyThemeUpdate.ps1" "%ROOT%\TestProject\Plugins\EasyTheme\Updater\" >nul
 
 rem 5. launch
 if exist "%ROOT%\TestProject\Saved\EasyTheme" rmdir /s /q "%ROOT%\TestProject\Saved\EasyTheme"

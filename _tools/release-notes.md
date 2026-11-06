@@ -6,7 +6,7 @@ Clean, compact, high-clarity editor theme for Unreal Engine 5. Dark by default, 
 - Dark: tooltips readable (light grey tooltip, black text).
 - Light: Details name field readable.
 - Engine-wide install (Engine/Plugins/Marketplace) active in every project.
-- Window > Easy Theme > Check for Updates.
+- Window > Easy Theme > Check for Updates: download, SHA-256 check and install on close (GitHub installs).
 
 **In 0.2.0**
 - Dark (default) and Light, switched live.
@@ -15,4 +15,4 @@ Clean, compact, high-clarity editor theme for Unreal Engine 5. Dark by default, 
 - Light Graphs: light canvas for Blueprint and Material graphs in Light mode; your grid colours are always restored.
 - Slim title bar, optional 3-pane layout, Report an Issue, Remove Saved Settings.
 
-Editor-only. No network access, no telemetry. MIT.
+Editor-only, no telemetry. Network access only when you click Check for Updates. MIT.

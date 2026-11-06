@@ -11,6 +11,8 @@ if not exist "_build\EasyTheme\Binaries\Win64" (echo No build found: run go.cmd 
 set "DST=%ENGINE%\Engine\Plugins\Marketplace\EasyTheme"
 robocopy "_build\EasyTheme" "%DST%" /MIR /XD Intermediate /XF *.pdb /NFL /NDL /NJH /NJS /NP
 if %errorlevel% GEQ 8 (echo Install failed. & pause & exit /b 1)
+mkdir "%DST%\Updater" 2>nul
+copy /y "_tools\updater\EasyThemeUpdate.ps1" "%DST%\Updater\" >nul
 echo.
 echo Installed: %DST%
 echo Restart any open Unreal editor to load it.

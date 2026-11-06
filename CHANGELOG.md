@@ -4,7 +4,7 @@
 - Dark: tooltips readable (Unreal draws tooltip text in black, so tooltips are now light grey in Dark).
 - Light: Details name field readable.
 - Engine-wide install now active in every project (packaged descriptor kept "EnabledByDefault").
-- Window > Easy Theme > Check for Updates (opens the GitHub releases page; no network access from the plugin).
+- Window > Easy Theme > Check for Updates: on click, asks GitHub for the latest release; GitHub installs can download it (SHA-256 checked) and install it when Unreal closes, with a backup. Other installs open the releases page.
 
 ## 0.2.0
 - Renamed to Easy Theme (from the internal "Theme 2001" prototype).

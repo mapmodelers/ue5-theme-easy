@@ -18,7 +18,9 @@ public class EasyTheme : ModuleRules
 			"Projects",
 			"LevelEditor",
 			"ToolMenus",
-			"UnrealEd"
+			"UnrealEd",
+			"HTTP",
+			"Json"
 		});
 	}
 }

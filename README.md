@@ -71,7 +71,7 @@ Unreal Engine, UE5, editor theme, dark theme, light theme, compact UI, classic U
 
 ## Privacy and safety
 
-- No network access, no telemetry, no data collection. "Report an Issue" only opens your browser; you choose what to attach.
+- No telemetry, no data collection. The only network access is **Check for Updates**, and only when you click it: it asks GitHub for the latest release and, if you accept, downloads it, checks its SHA-256 and installs it when Unreal closes (your previous version is kept as a backup in `Saved/EasyTheme/Update`). "Report an Issue" only opens your browser; you choose what to attach.
 - Editor-only: your game, your project content and the engine install are never modified.
 - Files it writes, all in your Unreal user folders:
   - the Dark/Light and Light Graphs choices, in the editor settings (`[EasyTheme]`)

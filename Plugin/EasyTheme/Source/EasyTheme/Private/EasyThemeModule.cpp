@@ -51,6 +51,8 @@
 #include "UnrealEdGlobals.h"
 #include "UnrealEdMisc.h"
 #include "Misc/MessageDialog.h"
+#include "Framework/Notifications/NotificationManager.h"
+#include "Widgets/Notifications/SNotificationList.h"
 #include "Misc/EngineVersion.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "Styling/StyleColors.h"
@@ -59,6 +61,13 @@
 #include "UObject/Class.h"
 #include "UObject/UnrealType.h"
 #include "Misc/CoreDelegates.h"
+#include "HttpModule.h"
+#include "Interfaces/IHttpRequest.h"
+#include "Interfaces/IHttpResponse.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
+#include "HAL/PlatformProcess.h"
 
 #include "GenericPlatform/ICursor.h"
 #if PLATFORM_WINDOWS
@@ -1569,6 +1578,176 @@ namespace EasyTheme
 		return Out;
 	}
 
+	// ---------------------------------------------------------------- updates
+	// Only on request (menu). GitHub installs carry Updater/EasyThemeUpdate.ps1: they can download
+	// the new release, check its SHA-256 and install it when Unreal closes. Other installs (Fab,
+	// source) just open the releases page: Fab updates go through the Epic launcher.
+	static const TCHAR* GApiLatest = TEXT("https://api.github.com/repos/mapmodelers/ue5-theme-easy/releases/latest");
+	struct FPendingUpdate { FString Version, Zip, Sha, Script, PluginDir, UpdateDir; bool bQuiet = false; };
+	static TOptional<FPendingUpdate> GPending;
+	static FString GFakeVersion;   // dev: pretend to run this version
+	static FString GPluginDir;
+
+	static FString UpdaterScript() { return GPluginDir / TEXT("Updater") / TEXT("EasyThemeUpdate.ps1"); }
+	static FString UpdateDir() { return FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("EasyTheme") / TEXT("Update")); }
+
+	static bool IsNewer(const FString& A, const FString& B)   // A > B, dotted numbers
+	{
+		TArray<FString> PA, PB;
+		A.ParseIntoArray(PA, TEXT(".")); B.ParseIntoArray(PB, TEXT("."));
+		for (int32 i = 0; i < FMath::Max(PA.Num(), PB.Num()); ++i)
+		{
+			const int32 X = PA.IsValidIndex(i) ? FCString::Atoi(*PA[i]) : 0;
+			const int32 Y = PB.IsValidIndex(i) ? FCString::Atoi(*PB[i]) : 0;
+			if (X != Y) { return X > Y; }
+		}
+		return false;
+	}
+
+	static void Toast(const FString& Msg, bool bOk = true)
+	{
+		FNotificationInfo Info(FText::FromString(Msg));
+		Info.ExpireDuration = 4.f;
+		TSharedPtr<SNotificationItem> N = FSlateNotificationManager::Get().AddNotification(Info);
+		if (N.IsValid()) { N->SetCompletionState(bOk ? SNotificationItem::CS_Success : SNotificationItem::CS_Fail); }
+	}
+
+	static TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Get(const FString& Url)
+	{
+		TSharedRef<IHttpRequest, ESPMode::ThreadSafe> R = FHttpModule::Get().CreateRequest();
+		R->SetURL(Url);
+		R->SetVerb(TEXT("GET"));
+		R->SetHeader(TEXT("User-Agent"), TEXT("EasyTheme-Updater"));
+		return R;
+	}
+
+	static void LaunchUpdater(const FPendingUpdate& P, int32 Pid)
+	{
+		// Run a copy from the update folder: the original is replaced during the update.
+		const FString Script = P.UpdateDir / TEXT("EasyThemeUpdate.ps1");
+		IFileManager::Get().Copy(*Script, *P.Script, true, true);
+		const FString Args = FString::Printf(
+			TEXT("-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"%s\" -Zip \"%s\" -ShaFile \"%s\" -PluginDir \"%s\" -EditorPid %d -Version \"%s\"%s"),
+			*Script, *P.Zip, *P.Sha, *P.PluginDir, Pid, *P.Version, P.bQuiet ? TEXT(" -Quiet") : TEXT(""));
+		FProcHandle H = FPlatformProcess::CreateProc(TEXT("powershell.exe"), *Args, true, true, true, nullptr, 0, nullptr, nullptr);
+		Note(FString::Printf(TEXT("%s updater launched for %s -> %s"), H.IsValid() ? TEXT("OK  ") : TEXT("MISS"), *P.Version, *P.PluginDir));
+	}
+
+	static void Download(const FString& Url, const FString& File, TFunction<void(bool)> Done)
+	{
+		TSharedRef<IHttpRequest, ESPMode::ThreadSafe> R = Get(Url);
+		R->OnProcessRequestComplete().BindLambda([File, Done](FHttpRequestPtr, FHttpResponsePtr Resp, bool bOk)
+		{
+			const bool bGood = bOk && Resp.IsValid() && Resp->GetResponseCode() == 200 && Resp->GetContent().Num() > 0
+				&& FFileHelper::SaveArrayToFile(Resp->GetContent(), *File);
+			Done(bGood);
+		});
+		R->ProcessRequest();
+	}
+
+	// bTestDir (dev): install into a scratch folder right away instead of the plugin on exit.
+	static void CheckForUpdates(bool bTestDir = false)
+	{
+		const FString Current = GFakeVersion.IsEmpty() ? GVersion : GFakeVersion;
+		if (!IFileManager::Get().FileExists(*UpdaterScript()))
+		{
+			FPlatformProcess::LaunchURL(GReleasesUrl, nullptr, nullptr);
+			return;
+		}
+		if (GPending.IsSet() && !bTestDir)
+		{
+			const FText Q = FText::FromString(FString::Printf(TEXT("Easy Theme %s will be installed when Unreal closes.\n\nCancel this update?"), *GPending->Version));
+			if (FMessageDialog::Open(EAppMsgType::YesNo, Q, FText::FromString(TEXT("Easy Theme"))) == EAppReturnType::Yes) { GPending.Reset(); Toast(TEXT("Easy Theme update cancelled.")); }
+			return;
+		}
+		Toast(TEXT("Easy Theme: checking for updates..."));
+		TSharedRef<IHttpRequest, ESPMode::ThreadSafe> R = Get(GApiLatest);
+		R->SetHeader(TEXT("Accept"), TEXT("application/vnd.github+json"));
+		R->OnProcessRequestComplete().BindLambda([Current, bTestDir](FHttpRequestPtr, FHttpResponsePtr Resp, bool bOk)
+		{
+			TSharedPtr<FJsonObject> J;
+			if (!bOk || !Resp.IsValid() || Resp->GetResponseCode() != 200
+				|| !FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Resp->GetContentAsString()), J) || !J.IsValid())
+			{
+				Note(FString::Printf(TEXT("MISS update check: http %d"), Resp.IsValid() ? Resp->GetResponseCode() : 0));
+				if (bTestDir) { return; }
+				if (FMessageDialog::Open(EAppMsgType::YesNo, FText::FromString(TEXT("Could not reach GitHub to check for updates.\n\nOpen the releases page in your browser?")), FText::FromString(TEXT("Easy Theme"))) == EAppReturnType::Yes)
+				{
+					FPlatformProcess::LaunchURL(GReleasesUrl, nullptr, nullptr);
+				}
+				return;
+			}
+			FString Tag = J->GetStringField(TEXT("tag_name"));
+			Tag.RemoveFromStart(TEXT("v"));
+			const FString Want = FString::Printf(TEXT("EasyTheme-%s-UE%d.%d-Win64.zip"), *Tag, FEngineVersion::Current().GetMajor(), FEngineVersion::Current().GetMinor());
+			FString ZipUrl, ShaUrl;
+			const TArray<TSharedPtr<FJsonValue>>* Assets = nullptr;
+			if (J->TryGetArrayField(TEXT("assets"), Assets))
+			{
+				for (const TSharedPtr<FJsonValue>& V : *Assets)
+				{
+					const TSharedPtr<FJsonObject> A = V->AsObject();
+					if (!A.IsValid()) { continue; }
+					const FString Name = A->GetStringField(TEXT("name"));
+					if (Name == Want) { ZipUrl = A->GetStringField(TEXT("browser_download_url")); }
+					if (Name == Want + TEXT(".sha256")) { ShaUrl = A->GetStringField(TEXT("browser_download_url")); }
+				}
+			}
+			Note(FString::Printf(TEXT("OK   update check: latest %s, current %s, zip %s, sha %s"), *Tag, *Current, ZipUrl.IsEmpty() ? TEXT("no") : TEXT("yes"), ShaUrl.IsEmpty() ? TEXT("no") : TEXT("yes")));
+			if (!IsNewer(Tag, Current))
+			{
+				if (bTestDir) { return; }
+				FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(FString::Printf(TEXT("Easy Theme %s is the latest version."), *Current)), FText::FromString(TEXT("Easy Theme")));
+				return;
+			}
+			if (ZipUrl.IsEmpty() || ShaUrl.IsEmpty())
+			{
+				if (bTestDir) { return; }
+				const FText Q = FText::FromString(FString::Printf(TEXT("Easy Theme %s is available (you have %s), but there is no automatic install for Unreal %d.%d.\n\nOpen the releases page?"),
+					*Tag, *Current, FEngineVersion::Current().GetMajor(), FEngineVersion::Current().GetMinor()));
+				if (FMessageDialog::Open(EAppMsgType::YesNo, Q, FText::FromString(TEXT("Easy Theme"))) == EAppReturnType::Yes) { FPlatformProcess::LaunchURL(GReleasesUrl, nullptr, nullptr); }
+				return;
+			}
+			const FText Q = FText::FromString(FString::Printf(
+				TEXT("Easy Theme %s is available (you have %s).\n\nYes: download it now and install it when Unreal closes.\nNo: open the release page instead."), *Tag, *Current));
+			const EAppReturnType::Type Ans = bTestDir ? EAppReturnType::Yes : FMessageDialog::Open(EAppMsgType::YesNoCancel, Q, FText::FromString(TEXT("Easy Theme update")));
+			if (Ans == EAppReturnType::No) { FPlatformProcess::LaunchURL(GReleasesUrl, nullptr, nullptr); return; }
+			if (Ans != EAppReturnType::Yes) { return; }
+
+			FPendingUpdate P;
+			P.Version = Tag;
+			P.UpdateDir = UpdateDir();
+			IFileManager::Get().MakeDirectory(*P.UpdateDir, true);
+			P.Zip = P.UpdateDir / Want;
+			P.Sha = P.Zip + TEXT(".sha256");
+			P.Script = UpdaterScript();
+			P.PluginDir = bTestDir ? P.UpdateDir / TEXT("TestPlugin") : GPluginDir;
+			P.bQuiet = bTestDir;
+			if (bTestDir) { IFileManager::Get().MakeDirectory(*P.PluginDir, true); }
+			Toast(FString::Printf(TEXT("Easy Theme: downloading %s..."), *Tag));
+			Download(ZipUrl, P.Zip, [P, ShaUrl, bTestDir](bool bZip)
+			{
+				if (!bZip) { Toast(TEXT("Easy Theme: download failed."), false); return; }
+				Download(ShaUrl, P.Sha, [P, bTestDir](bool bSha)
+				{
+					if (!bSha) { Toast(TEXT("Easy Theme: download failed."), false); return; }
+					if (bTestDir) { LaunchUpdater(P, 0); return; }
+					GPending = P;
+					Toast(FString::Printf(TEXT("Easy Theme %s will be installed when Unreal closes."), *P.Version));
+				});
+			});
+		});
+		R->ProcessRequest();
+	}
+
+	// Called on exit: hand the pending update to the updater, which waits for this editor to close.
+	static void RunPendingUpdate()
+	{
+		if (!GPending.IsSet()) { return; }
+		LaunchUpdater(GPending.GetValue(), (int32)FPlatformProcess::GetCurrentProcessId());
+		GPending.Reset();
+	}
+
 	// Private by default: files are written locally for the user to review and attach by hand;
 	// nothing is uploaded. No logs (they contain user names and paths).
 	static void ReportIssue()
@@ -1640,11 +1819,14 @@ namespace EasyTheme
 			FText::FromString(TEXT("Saves a screenshot and system info in Saved/EasyTheme/Issue, opens that folder and a pre-filled GitHub issue. Nothing is uploaded unless you attach it.")),
 			FSlateIcon(),
 			FUIAction(FExecuteAction::CreateLambda([]() { ReportIssue(); })));
+		const bool bCanInstall = IFileManager::Get().FileExists(*UpdaterScript());
 		Help.AddMenuEntry("EasyThemeUpdate",
 			FText::FromString(FString::Printf(TEXT("Check for Updates (you have %s)..."), *GVersion)),
-			FText::FromString(TEXT("Opens the latest release on GitHub in your browser. Easy Theme itself never connects to the internet.")),
+			FText::FromString(bCanInstall
+				? TEXT("Asks GitHub for the latest release. If there is one, you can download it and have it installed when Unreal closes. This is the only time Easy Theme connects to the internet.")
+				: TEXT("Opens the latest release on GitHub in your browser.")),
 			FSlateIcon(),
-			FUIAction(FExecuteAction::CreateLambda([]() { FPlatformProcess::LaunchURL(GReleasesUrl, nullptr, nullptr); })));
+			FUIAction(FExecuteAction::CreateLambda([]() { CheckForUpdates(); })));
 
 		FToolMenuSection& Clean = Sub->AddSection("EasyThemeClean", FText::FromString(TEXT("Uninstall")));
 		Clean.AddMenuEntry("EasyThemeRemove",
@@ -1678,7 +1860,11 @@ public:
 
 		TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("EasyTheme"));
 		GResDir = Plugin.IsValid() ? FPaths::ConvertRelativePathToFull(Plugin->GetBaseDir() / TEXT("Resources")) : FString();
-		if (Plugin.IsValid()) { GVersion = Plugin->GetDescriptor().VersionName; }
+		if (Plugin.IsValid())
+		{
+			GVersion = Plugin->GetDescriptor().VersionName;
+			GPluginDir = FPaths::ConvertRelativePathToFull(Plugin->GetBaseDir());
+		}
 		GConfig->GetBool(GConfigSection, TEXT("Dark"), GDark, GEditorSettingsIni);
 		GConfig->GetBool(GConfigSection, TEXT("LightGraphs"), GLightGraphs, GEditorSettingsIni);
 		GDev = IFileManager::Get().FileExists(*(ReportDir() / TEXT("dev.flag")));
@@ -1698,7 +1884,7 @@ public:
 		}), 3.0f));
 
 		// Put the user's graph colours back before Unreal writes its settings on exit.
-		PreExitHandle = FCoreDelegates::OnPreExit.AddLambda([]() { EasyTheme::ApplyGraphColors(false); });
+		PreExitHandle = FCoreDelegates::OnPreExit.AddLambda([]() { EasyTheme::ApplyGraphColors(false); EasyTheme::RunPendingUpdate(); });
 
 		Tickers.Add(FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([](float)
 		{
@@ -1799,6 +1985,14 @@ public:
 						W->RequestDestroyWindow();
 						return false;
 					}), 1.0f);
+				})));
+			Cmds.Add(IConsoleManager::Get().RegisterConsoleCommand(
+				TEXT("EasyTheme.UpdateTest"),
+				TEXT("Easy Theme (dev): EasyTheme.UpdateTest <fake version> - full update into Saved/EasyTheme/Update/TestPlugin"),
+				FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
+				{
+					EasyTheme::GFakeVersion = Args.Num() ? Args[0] : TEXT("0.0.1");
+					EasyTheme::CheckForUpdates(true);
 				})));
 			Cmds.Add(IConsoleManager::Get().RegisterConsoleCommand(
 				TEXT("EasyTheme.Panes"),
