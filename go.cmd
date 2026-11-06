@@ -23,6 +23,7 @@ echo Building Easy Theme (2-5 min)...
 call "%ENGINE%\Engine\Build\BatchFiles\RunUAT.bat" BuildPlugin -Plugin="%ROOT%\Plugin\EasyTheme\EasyTheme.uplugin" -Package="%ROOT%\_build\EasyTheme" -TargetPlatforms=Win64 > "%RUN%\build.log" 2>&1
 set "BE=%errorlevel%"
 if not "%BE%"=="0" goto :buildfail
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\_tools\fix_uplugin.ps1" "%ROOT%\_build\EasyTheme\EasyTheme.uplugin"
 
 rem 4. install into the test project
 robocopy "%ROOT%\_build\EasyTheme" "%ROOT%\TestProject\Plugins\EasyTheme" /MIR /NFL /NDL /NJH /NJS /NP > "%RUN%\install.log"
