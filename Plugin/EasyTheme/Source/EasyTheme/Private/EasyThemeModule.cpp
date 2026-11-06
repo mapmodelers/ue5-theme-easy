@@ -1468,8 +1468,12 @@ namespace EasyTheme
 	static void SetMode(bool bDark, bool bAskRestart = false)
 	{
 		GDark = bDark;
-		GConfig->SetBool(GConfigSection, TEXT("Dark"), GDark, GEditorSettingsIni);
-		GConfig->Flush(false, GEditorSettingsIni);
+		// The choice is shared by every project; test-project switches (dev) are not saved.
+		if (!GDev)
+		{
+			GConfig->SetBool(GConfigSection, TEXT("Dark"), GDark, GEditorSettingsIni);
+			GConfig->Flush(false, GEditorSettingsIni);
+		}
 		ApplyColors(true);
 		ApplyRemaps();
 		ApplyStyles();
