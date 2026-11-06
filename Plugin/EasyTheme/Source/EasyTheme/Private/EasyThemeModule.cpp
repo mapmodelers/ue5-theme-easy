@@ -1665,6 +1665,8 @@ namespace EasyTheme
 		R->ProcessRequest();
 	}
 
+	static bool GTestLive = false;   // dev: UpdateTest into this running plugin (tests files in use)
+
 	// bTestDir (dev): install into a scratch folder right away instead of the plugin on exit.
 	static void CheckForUpdates(bool bTestDir = false)
 	{
@@ -1741,9 +1743,9 @@ namespace EasyTheme
 			P.Zip = P.UpdateDir / Want;
 			P.Sha = P.Zip + TEXT(".sha256");
 			P.Script = UpdaterScript();
-			P.PluginDir = bTestDir ? P.UpdateDir / TEXT("TestPlugin") : GPluginDir;
+			P.PluginDir = (bTestDir && !GTestLive) ? P.UpdateDir / TEXT("TestPlugin") : GPluginDir;
 			P.bQuiet = bTestDir;
-			if (bTestDir) { IFileManager::Get().MakeDirectory(*P.PluginDir, true); }
+			if (bTestDir && !GTestLive) { IFileManager::Get().MakeDirectory(*P.PluginDir, true); }
 			Toast(FString::Printf(TEXT("Easy Theme: downloading %s..."), *Tag));
 			Download(ZipUrl, P.Zip, [P, ShaUrl, bTestDir](bool bZip)
 			{
@@ -2432,10 +2434,11 @@ public:
 				FConsoleCommandDelegate::CreateLambda([]() { EasyTheme::ReportIssue(false); EasyTheme::WriteReport(); })));
 			Cmds.Add(IConsoleManager::Get().RegisterConsoleCommand(
 				TEXT("EasyTheme.UpdateTest"),
-				TEXT("Easy Theme (dev): EasyTheme.UpdateTest <fake version> - full update into Saved/EasyTheme/Update/TestPlugin"),
+				TEXT("Easy Theme (dev): EasyTheme.UpdateTest <fake version> [live] - full update into Saved/EasyTheme/Update/TestPlugin, or into this running plugin with live"),
 				FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
 				{
 					EasyTheme::GFakeVersion = Args.Num() ? Args[0] : TEXT("0.0.1");
+					EasyTheme::GTestLive = Args.Num() > 1 && Args[1] == TEXT("live");
 					EasyTheme::CheckForUpdates(true);
 				})));
 			Cmds.Add(IConsoleManager::Get().RegisterConsoleCommand(

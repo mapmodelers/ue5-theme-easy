@@ -4,6 +4,10 @@ Clean, compact, high-clarity editor theme for Unreal Engine 5. Dark by default, 
 
 **In 0.2.2**
 - Toolbar in Tab Bar (on by default): tabs and main toolbar share one row, + button for recent levels and assets. Switch: Window > Easy Theme > Layout.
+- Full tab row: tabs shrink, extra toolbar buttons go behind Unreal's overflow button.
+- Graph node titles readable; toolbars aligned with the tabs.
+- Report a Bug: pre-filled GitHub issue, screenshot and a cleaned-up log (no user name or folders) to attach.
+- Updater: finishes even when another open editor still uses the plugin.
 
 **In 0.2.1**
 - Dark: tooltips readable (light grey tooltip, black text).

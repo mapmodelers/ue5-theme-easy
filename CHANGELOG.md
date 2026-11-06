@@ -6,6 +6,7 @@
 - Toolbars line up with the tabs: same 27 px height, no vertical padding around blocks.
 - Full tab row: tabs shrink (down to 72 px, at most half the row together) and a toolbar that still does not fit shows Unreal's ">>" overflow button instead of running off the window. Tab widths never depend on the editor in front.
 - Window > Easy Theme > Help > Report a Bug...: saves a screenshot, a cleaned-up log (user name, computer name and folders removed) and system info, then opens that folder and a pre-filled GitHub issue. Nothing is uploaded unless you attach it.
+- Updater: files another open editor still holds are moved aside (Windows allows it) instead of retrying for minutes, so an update never stops half-way; that editor keeps the old version until it restarts.
 
 ## 0.2.1
 - Dark: tooltips readable (Unreal draws tooltip text in black, so tooltips are now light grey in Dark).

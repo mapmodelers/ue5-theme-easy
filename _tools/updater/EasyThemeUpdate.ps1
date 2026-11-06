@@ -2,6 +2,8 @@
 # 1. waits for that editor to exit  2. checks the download's SHA-256  3. backs up the current
 # plugin  4. replaces it (asks for admin rights if the plugin is in Program Files)
 # 5. restores the backup if anything fails. Log: update.log next to the download.
+# Files another open editor still holds (its loaded DLL) are renamed aside, which Windows allows,
+# so the update never stops half-way; that editor keeps its old copy until it restarts.
 param(
     [string]$Zip, [string]$ShaFile, [string]$PluginDir, [int]$EditorPid = 0,
     [string]$Version, [switch]$Elevated, [switch]$Quiet
@@ -16,9 +18,31 @@ function Say([string]$m, [string]$icon = 'Information') {
     Add-Type -AssemblyName System.Windows.Forms
     [void][System.Windows.Forms.MessageBox]::Show($m, 'Easy Theme update', 'OK', $icon)
 }
+$OldTag = '.easytheme-old'
 function Copy-Tree([string]$From, [string]$To) {
-    robocopy $From $To /MIR /XD Intermediate /R:24 /W:5 /NFL /NDL /NJH /NJS /NP | Out-Null
+    robocopy $From $To /MIR /XD Intermediate /XF "*$OldTag" /R:2 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
     return ($LASTEXITCODE -lt 8)
+}
+function Test-Locked([string]$Path) {
+    try { $s = [IO.File]::Open($Path, 'Open', 'ReadWrite', 'None'); $s.Close(); return $false } catch { return $true }
+}
+# Leftovers from an earlier update, free once every editor that used them has closed.
+function Remove-Old([string]$Dir) {
+    Get-ChildItem -Path $Dir -Recurse -Force -File -Filter "*$OldTag" -ErrorAction SilentlyContinue |
+        ForEach-Object { Remove-Item -Force $_.FullName -ErrorAction SilentlyContinue }
+}
+# Renames files still in use; returns how many. Throws if one cannot be moved (nothing changed yet).
+function Move-Locked([string]$Dir) {
+    $n = 0
+    foreach ($f in Get-ChildItem -Path $Dir -Recurse -Force -File -ErrorAction SilentlyContinue) {
+        if ($f.Name.EndsWith($OldTag) -or $f.FullName -like '*\Intermediate\*') { continue }
+        if (-not (Test-Locked $f.FullName)) { continue }
+        $to = $f.FullName + '.' + [DateTime]::Now.Ticks + $OldTag
+        try { Move-Item -LiteralPath $f.FullName -Destination $to -Force } catch { throw "in use and cannot be moved aside: $($f.Name)" }
+        Log "in use, moved aside: $($f.Name)"
+        $n++
+    }
+    return $n
 }
 
 try {
@@ -53,6 +77,7 @@ try {
     $src = Join-Path $work 'EasyTheme'
     if (-not (Test-Path (Join-Path $src 'EasyTheme.uplugin'))) { throw 'the download has no EasyTheme.uplugin' }
 
+    Remove-Old $PluginDir
     $backup = Join-Path $UpdateDir 'Backup'
     if (Test-Path $backup) { Remove-Item -Recurse -Force $backup }
     if (Test-Path (Join-Path $PluginDir 'EasyTheme.uplugin')) {
@@ -60,16 +85,26 @@ try {
         Log "backup: $backup"
     }
 
+    try { $moved = Move-Locked $PluginDir }
+    catch {
+        Log "locked: $_"
+        Say 'Easy Theme could not be updated: another Unreal editor is still using it. Nothing was changed. Close every Unreal editor, then use Check for Updates again.' 'Warning'
+        exit 1
+    }
     if (-not (Copy-Tree $src $PluginDir)) {
-        Log 'copy failed (files in use?), restoring backup'
+        Log 'copy failed, restoring backup'
         if (Test-Path $backup) { [void](Copy-Tree $backup $PluginDir) }
-        Say 'Easy Theme could not be updated: another Unreal editor is still using it. Your previous version was kept. Close every Unreal editor, then use Check for Updates again.' 'Warning'
+        Say 'Easy Theme could not be updated (copy failed). Your previous version was kept. Close every Unreal editor, then use Check for Updates again.' 'Warning'
         exit 1
     }
     Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
     Remove-Item -Force $Zip, $ShaFile -ErrorAction SilentlyContinue
     Log "updated to $Version"
-    Say "Easy Theme was updated to $Version. It is active the next time you open Unreal."
+    if ($moved -gt 0) {
+        Say "Easy Theme was updated to $Version. It is active the next time you open Unreal. An editor that is still open keeps the old version until you restart it."
+    } else {
+        Say "Easy Theme was updated to $Version. It is active the next time you open Unreal."
+    }
     exit 0
 }
 catch {
