@@ -3,14 +3,44 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Easy Theme for Unreal Engine 5</title>
-<meta name="description" content="Clean, compact, high-clarity editor theme for Unreal Engine 5. Square controls, crisp 1-pixel frames, readable text in every panel. Dark by default, Light included.">
-<meta name="keywords" content="Unreal Engine, UE5, editor theme, dark theme, light theme, compact UI, Slate, editor plugin">
+<title>Easy Theme for Unreal Engine 5 – free editor theme, Dark and Light</title>
+<meta name="description" content="Free, open-source editor theme for Unreal Engine 5. Clean, compact, high-clarity: square controls, crisp 1-pixel frames, readable text in every panel. Dark by default, Light included.">
+<meta name="keywords" content="Unreal Engine 5, UE5, UE 5.8, Unreal Editor theme, editor skin, dark theme, light theme, classic theme, compact UI, Slate style, editor plugin, free plugin, open source, readability">
+<meta name="author" content="MapModelers">
+<link rel="canonical" href="https://mapmodelers.github.io/ue5-theme-easy/">
+<link rel="icon" type="image/png" href="media/icon.png">
+<meta name="theme-color" content="#2a2a2a">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://mapmodelers.github.io/ue5-theme-easy/">
 <meta property="og:title" content="Easy Theme for Unreal Engine 5">
-<meta property="og:description" content="Clean. Compact. Readable. Dark by default, Light included.">
-<meta property="og:image" content="media/social.png">
+<meta property="og:description" content="Clean. Compact. Readable. Free editor theme, Dark by default, Light included.">
+<meta property="og:image" content="https://mapmodelers.github.io/ue5-theme-easy/media/social.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="Unreal Editor with Easy Theme">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Easy Theme for Unreal Engine 5">
+<meta name="twitter:description" content="Clean. Compact. Readable. Free editor theme, Dark by default, Light included.">
+<meta name="twitter:image" content="https://mapmodelers.github.io/ue5-theme-easy/media/social.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Easy Theme for Unreal Engine 5",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Windows",
+  "softwareVersion": "0.2.0",
+  "description": "Clean, compact, high-clarity editor theme for Unreal Engine 5. Dark by default, Light included.",
+  "url": "https://mapmodelers.github.io/ue5-theme-easy/",
+  "downloadUrl": "https://github.com/mapmodelers/ue5-theme-easy/releases/latest",
+  "license": "https://opensource.org/licenses/MIT",
+  "image": "https://mapmodelers.github.io/ue5-theme-easy/media/social.png",
+  "author": { "@type": "Organization", "name": "MapModelers" },
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+}
+</script>
 <style>
-  :root { --face:#2a2a2a; --panel:#3a3a3a; --hi:#5a5a5a; --lo:#101010; --ink:#e6e6e6; --dim:#9a9a9a; --blue:#2e4a7a; --accent:#6f9fe8; }
+  :root { --face:#2a2a2a; --panel:#3a3a3a; --hi:#5a5a5a; --lo:#101010; --ink:#e6e6e6; --dim:#9a9a9a; --blue:#2e4a7a; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--face); color:var(--ink); font:16px/1.55 Tahoma, Verdana, "Segoe UI", sans-serif; }
   .win { max-width:1080px; margin:32px auto; background:var(--panel);
@@ -18,49 +48,62 @@
   .title { background:linear-gradient(90deg,var(--blue),var(--panel)); padding:6px 12px; font-weight:bold; font-size:14px; }
   .body { padding:28px 32px 36px; }
   h1 { font-size:34px; margin:0 0 6px; }
+  h2 { font-size:20px; margin:0 0 10px; }
   .lead { color:var(--dim); margin:0 0 24px; font-size:18px; }
-  .shot { display:block; width:100%; border:2px solid; border-color:var(--lo) var(--hi) var(--hi) var(--lo); margin:0 0 24px; }
-  .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
-  ul { padding-left:20px; } li { margin:6px 0; } b { color:#fff; }
+  .shot { display:block; width:100%; height:auto; border:2px solid; border-color:var(--lo) var(--hi) var(--hi) var(--lo); margin:0 0 24px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:0 24px; }
+  ul, ol { padding-left:20px; margin:0; } li { margin:6px 0; } b { color:#fff; }
+  code { font-family:Consolas, monospace; font-size:14px; background:#2a2a2a; padding:1px 4px; }
+  a { color:#9cc0f5; }
   .btn { display:inline-block; padding:6px 16px; color:var(--ink); text-decoration:none; background:var(--panel);
-         border:2px solid; border-color:var(--hi) var(--lo) var(--lo) var(--hi); margin-right:8px; }
+         border:2px solid; border-color:var(--hi) var(--lo) var(--lo) var(--hi); margin:0 8px 8px 0; }
+  .btn.main { background:var(--blue); font-weight:bold; }
   .btn:active { border-color:var(--lo) var(--hi) var(--hi) var(--lo); }
   .etch { border:0; border-top:1px solid var(--lo); border-bottom:1px solid var(--hi); margin:28px 0; }
   .small { color:var(--dim); font-size:13px; }
-  @media (max-width:720px) { .grid { grid-template-columns:1fr; } .body { padding:20px; } }
+  .cap { color:var(--dim); margin:-14px 0 28px; font-size:15px; }
+  .grid .shot { margin-bottom:24px; }
+  @media (max-width:720px) { .grid { grid-template-columns:1fr; } .body { padding:20px; } h1 { font-size:26px; } }
 </style>
 </head>
 <body>
 <div class="win">
   <div class="title">Easy Theme</div>
-  <div class="body">
+  <main class="body">
     <h1>Easy Theme for Unreal Engine 5</h1>
-    <p class="lead">Clean. Compact. Readable. Dark by default, Light included.</p>
-    <a class="btn" href="https://github.com/mapmodelers/ue5-theme-easy">GitHub</a>
+    <p class="lead">Clean. Compact. Readable. Dark by default, Light included. Free and open source.</p>
+    <a class="btn main" href="https://github.com/mapmodelers/ue5-theme-easy/releases/latest">Download</a>
+    <a class="btn" href="https://github.com/mapmodelers/ue5-theme-easy">Source on GitHub</a>
     <a class="btn" href="https://github.com/mapmodelers/ue5-theme-easy/issues">Support</a>
     <hr class="etch">
-    <img class="shot" src="media/dark.png" alt="Unreal Editor with Easy Theme, Dark">
+
+    <img class="shot" src="media/dark.png" width="1920" height="1048" alt="Unreal Editor with Easy Theme, Dark">
+    <p class="cap">Dark, the default. Square controls, crisp 1-pixel frames, compact toolbars.</p>
+
+    <img class="shot" src="media/light.png" width="1920" height="1048" alt="Unreal Editor with Easy Theme, Light">
+    <p class="cap">Light, switched live from Window &gt; Easy Theme.</p>
+
     <div class="grid">
-      <div>
-        <ul>
-          <li><b>Dark and Light</b>, switched live from Window &gt; Easy Theme.</li>
-          <li><b>Compact</b>: thinner tabs and toolbars, more room for work.</li>
-          <li><b>Pixel-exact</b>: square, bevelled controls with no blur.</li>
-          <li><b>Readable everywhere</b>: no stray dark panels or invisible text.</li>
-        </ul>
-      </div>
-      <div>
-        <ul>
-          <li><b>Graphs follow the mode</b>: Blueprint and Material.</li>
-          <li><b>Slim title bar</b>: no oversized logo.</li>
-          <li><b>Optional 3-pane layout</b> in Window &gt; Load Layout.</li>
-          <li><b>Editor-only</b>: no engine changes; disable to remove.</li>
-        </ul>
-      </div>
+      <img class="shot" src="media/graph-light.png" width="1505" height="693" alt="Material graph, Light Graphs">
+      <img class="shot" src="media/graph-dark.png" width="1505" height="693" alt="Material graph, Dark">
     </div>
-    <img class="shot" src="media/light.png" alt="Unreal Editor with Easy Theme, Light">
-    <p class="small">Unreal Engine 5.8, Windows. Unreal and Unreal Engine are trademarks of Epic Games, Inc. Not affiliated with or endorsed by Epic Games.</p>
-  </div>
+    <p class="cap">Graphs follow the mode. Your grid colours are always restored.</p>
+
+    <div class="grid">
+      <img class="shot" src="media/toolbar-dark.png" width="1120" height="280" alt="Toolbar, Dark">
+      <img class="shot" src="media/toolbar-light.png" width="1120" height="280" alt="Toolbar, Light">
+    </div>
+    <p class="cap">Pixel-exact bevels, no blur.</p>
+
+    <img class="shot" src="media/blueprint-dark.png" width="1920" height="1048" alt="Blueprint editor with Easy Theme, Dark">
+    <p class="cap">Every editor, every panel.</p>
+    <hr class="etch">
+
+    <p><b>Install:</b> unzip the download into <code>YourProject/Plugins/</code> and start the editor. Options: <b>Window &gt; Easy Theme</b>. Editor-only, no telemetry.</p>
+
+    <p class="small">Unreal Engine 5.8, Windows (Win64). MIT licence. © 2026 Adrien Lelievre (MapModelers).<br>
+    Unreal and Unreal Engine are trademarks of Epic Games, Inc. Not affiliated with or endorsed by Epic Games.</p>
+  </main>
 </div>
 </body>
 </html>

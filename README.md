@@ -1,6 +1,6 @@
 # Easy Theme for Unreal Engine 5
 
-[Presentation page](https://mapmodelers.github.io/ue5-theme-easy/) · Free on Fab (coming) · MIT
+[Download](https://github.com/mapmodelers/ue5-theme-easy/releases/latest) · [Presentation page](https://mapmodelers.github.io/ue5-theme-easy/) · Free on Fab (coming) · MIT
 
 **Clean, compact, high-clarity editor theme. Dark by default, Light included.**
 
@@ -10,7 +10,7 @@ Easy Theme restyles the whole Unreal Editor in a calm, classic desktop style: sq
 
 ## Features
 
-- **Dark and Light.** Dark by default, Light one click away. The switch is live, with no restart needed.
+- **Dark and Light.** Dark by default, Light one click away. The switch is live.
 - **Compact.** Thinner tabs and toolbars, 16 px toolbar icons and tighter padding fit more content on screen.
 - **Pixel-exact.** Bevelled buttons, sunken fields, square tabs, checkboxes and scrollbars, with no blurred edges.
 - **Readable everywhere.** Fixes the editor's hard-coded colours (Place Actors, Content Browser, search fields and more) so no panel stays dark or turns unreadable.
@@ -25,10 +25,19 @@ Easy Theme restyles the whole Unreal Editor in a calm, classic desktop style: sq
 |---|---|
 | ![](docs/media/toolbar-dark.png) | ![](docs/media/toolbar-light.png) |
 
+| Light Graphs | Dark |
+|---|---|
+| ![](docs/media/graph-light.png) | ![](docs/media/graph-dark.png) |
+
+![Blueprint editor, Dark](docs/media/blueprint-dark.png)
+
 ## Install
 
-1. Copy `Plugin/EasyTheme` into your project's `Plugins` folder, or into `Engine/Plugins/Marketplace` for all projects.
-2. Start the editor. The theme applies at startup.
+1. Download `EasyTheme-0.2.0-UE5.8-Win64.zip` from [Releases](https://github.com/mapmodelers/ue5-theme-easy/releases/latest). It is prebuilt: no compiler needed.
+2. Unzip it into your project's `Plugins` folder (`MyProject/Plugins/EasyTheme`), or into `Engine/Plugins/Marketplace` for every project.
+3. Start the editor. The theme applies at startup.
+
+From source: copy `Plugin/EasyTheme` instead (Visual Studio required, the editor compiles it on first launch).
 
 ## Use
 

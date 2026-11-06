@@ -1,0 +1,12 @@
+Clean, compact, high-clarity editor theme for Unreal Engine 5. Dark by default, Light included.
+
+**Install:** unzip `EasyTheme-0.2.0-UE5.8-Win64.zip` into `YourProject/Plugins/` (or `Engine/Plugins/Marketplace/` for every project), then start the editor. Prebuilt for UE 5.8, Win64. Options: **Window > Easy Theme**.
+
+**In 0.2.0**
+- Dark (default) and Light, switched live.
+- Compact density, pixel-exact bevels and frames, Tahoma UI font.
+- Readability fixes across the editor: text fields, search highlight, Content Browser, Place Actors.
+- Light Graphs: light canvas for Blueprint and Material graphs in Light mode; your grid colours are always restored.
+- Slim title bar, optional 3-pane layout, Report an Issue, Remove Saved Settings.
+
+Editor-only. No network access, no telemetry. MIT.

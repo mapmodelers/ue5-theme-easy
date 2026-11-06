@@ -30,6 +30,7 @@
 #include "Framework/Docking/TabManager.h"
 #include "Framework/Docking/LayoutService.h"
 #include "Widgets/SWindow.h"
+#include "Widgets/Docking/SDockTab.h"
 #include "Rendering/SlateRenderer.h"
 #include "Containers/Ticker.h"
 #include "HAL/FileManager.h"
@@ -463,6 +464,19 @@ namespace EasyTheme
 			}
 		}
 		Note(FString::Printf(TEXT("OK   light-text styles %s: %d"), GDark ? TEXT("restored") : TEXT("darkened"), Fixed));
+	}
+
+	// Name fields (Details header, inline rename) draw their resting text in the theme's White,
+	// which stays white in Light. Those go to the text colour in Light and back in Dark.
+	static TMap<FTextBlockStyle*, FSlateColor> GWhiteText;
+	static void InkWhiteText(FTextBlockStyle& T, const FSlateColor& Ink)
+	{
+		if (!GWhiteText.Contains(&T))
+		{
+			if (!(T.ColorAndOpacity == FSlateColor(EStyleColor::White))) { return; }
+			GWhiteText.Add(&T, T.ColorAndOpacity);
+		}
+		T.ColorAndOpacity = GDark ? GWhiteText[&T] : Ink;
 	}
 
 	static void ApplyRemaps()
@@ -960,7 +974,7 @@ namespace EasyTheme
 					if (S->HasWidgetStyle<FInlineEditableTextBlockStyle>(Key))
 					{
 						FInlineEditableTextBlockStyle* T = const_cast<FInlineEditableTextBlockStyle*>(&S->GetWidgetStyle<FInlineEditableTextBlockStyle>(Key));
-						Done.Add(T, &bNew); if (!bNew) { InkBox(T->EditableTextBoxStyle); ++Swept; }
+						Done.Add(T, &bNew); if (!bNew) { InkBox(T->EditableTextBoxStyle); InkWhiteText(T->TextStyle, Ink); ++Swept; }
 					}
 					if (S->HasWidgetStyle<FEditableTextStyle>(Key))
 					{
@@ -974,7 +988,8 @@ namespace EasyTheme
 					}
 				}
 			}
-			Note(FString::Printf(TEXT("OK   text-entry styles swept: %d"), Swept));
+			PatchStyle<FTextBlockStyle>(Sets, TEXT("DetailsView.ConstantTextBlockStyle"), [&](FTextBlockStyle& T) { InkWhiteText(T, Ink); });
+			Note(FString::Printf(TEXT("OK   text-entry styles swept: %d (white name text: %d)"), Swept, GWhiteText.Num()));
 
 			// Search matches: classic find highlight (pale yellow, black text; amber, white text in Dark).
 			const FSlateBrush Hilite = FSlateColorBrush(Hex(GDark ? TEXT("7A6418") : TEXT("FFE680")));
@@ -1502,7 +1517,7 @@ namespace EasyTheme
 	// Same route as Window > Load Layout: copy the layout over the editor layout file, then rebuild.
 	static void UsePanesLayout()
 	{
-		WriteUserLayout(false);
+		WriteUserLayout(true);   // always the current preset, never a file left by an older version
 		const FString Target = PanesLayoutFile();
 		if (!IFileManager::Get().FileExists(*Target)) { Note(TEXT("MISS 3-pane layout file")); return; }
 		if (FLayoutSaveRestore::DuplicateConfig(Target, GEditorLayoutIni))
@@ -1717,6 +1732,32 @@ public:
 			{
 				EasyTheme::SetMode(Args.Num() > 0 ? Args[0] != TEXT("0") : !EasyTheme::GDark);
 			})));
+		// Dev-only helpers for staging screenshots (test project).
+		if (EasyTheme::GDev)
+		{
+			Cmds.Add(IConsoleManager::Get().RegisterConsoleCommand(
+				TEXT("EasyTheme.Tab"),
+				TEXT("Easy Theme (dev): EasyTheme.Tab <LevelEditorTabId> [close]"),
+				FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
+				{
+					if (Args.Num() == 0 || !FModuleManager::Get().IsModuleLoaded(TEXT("LevelEditor"))) { return; }
+					TSharedPtr<FTabManager> TM = FModuleManager::GetModuleChecked<FLevelEditorModule>(TEXT("LevelEditor")).GetLevelEditorTabManager();
+					if (!TM.IsValid()) { return; }
+					const FTabId Id = FTabId(FName(*Args[0]));
+					if (Args.Num() > 1 && Args[1] == TEXT("close"))
+					{
+						if (TSharedPtr<SDockTab> T = TM->FindExistingLiveTab(Id)) { T->RequestCloseTab(); }
+					}
+					else
+					{
+						TM->TryInvokeTab(Id);
+					}
+				})));
+			Cmds.Add(IConsoleManager::Get().RegisterConsoleCommand(
+				TEXT("EasyTheme.Panes"),
+				TEXT("Easy Theme (dev): apply the 3-pane layout"),
+				FConsoleCommandDelegate::CreateLambda([]() { EasyTheme::UsePanesLayout(); })));
+		}
 		Cmds.Add(IConsoleManager::Get().RegisterConsoleCommand(
 			TEXT("EasyTheme.Layout"),
 			TEXT("Easy Theme: rewrite the 3-pane user layout"),

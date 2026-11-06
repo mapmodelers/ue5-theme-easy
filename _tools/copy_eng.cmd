@@ -12,7 +12,7 @@ for /f "delims=" %%P in ('where /r "%E%\Source\Runtime\Slate" ToolBarStyle.h Tab
 for /f "delims=" %%P in ('where /r "%E%\Source\Runtime\SlateCore" ToolBarStyle.h SlateColor.h WidgetStyle.h 2^>nul') do copy /y "%%P" "%D%\" >nul
 for /f "delims=" %%P in ('where /r "%E%\Source\Editor\UnrealEd" UnrealEdGlobals.h AssetEditorSubsystem.h 2^>nul') do copy /y "%%P" "%D%\" >nul
 for /f "delims=" %%P in ('where /r "%E%\Source\Editor\GraphEditor" SNodePanel.cpp SGraphPin.cpp SGraphNode.cpp GraphEditorSettings.h 2^>nul') do copy /y "%%P" "%D%\" >nul
-for /f "delims=" %%P in ('where /r "%E%\Source\Editor" AssetViewWidgets.cpp AssetViewWidgets.h EditorStyleSettings.h SGraphPanel.cpp SGraphEditorImpl.cpp ConnectionDrawingPolicy.cpp SGraphNodeComment.cpp SGraphNodeK2Base.cpp 2^>nul') do copy /y "%%P" "%D%\" >nul
+for /f "delims=" %%P in ('where /r "%E%\Source\Editor" AssetViewWidgets.cpp AssetViewWidgets.h EditorStyleSettings.h SGraphPanel.cpp SGraphEditorImpl.cpp ConnectionDrawingPolicy.cpp SGraphNodeComment.cpp SGraphNodeK2Base.cpp SMaterialEditorSubstrateWidget.cpp SMaterialEditorSubstrateWidget.h 2^>nul') do copy /y "%%P" "%D%\" >nul
 for /f "delims=" %%P in ('where /r "%E%\Source\Runtime\Slate" SMenuEntryBlock.cpp SlateTextHighlightRunRenderer.cpp MultiBox.cpp SMultiBoxWidget.cpp 2^>nul') do copy /y "%%P" "%D%\" >nul
 if not exist "%D%\Themes" mkdir "%D%\Themes"
 copy /y "%E%\Content\Slate\Themes\*.json" "%D%\Themes\" >nul 2>&1
