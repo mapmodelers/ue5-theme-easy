@@ -4,7 +4,7 @@ rem Needs a fresh build in _build (go.cmd). Run from anywhere.
 setlocal
 cd /d "%~dp0.."
 set "REPO=mapmodelers/ue5-theme-easy"
-set "VER=0.2.0"
+set "VER=0.2.1"
 set "ZIP=_run\EasyTheme-%VER%-UE5.8-Win64.zip"
 if not exist "_build\EasyTheme\Binaries\Win64" (echo No build found: run go.cmd first. & exit /b 1)
 

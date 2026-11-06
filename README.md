@@ -35,7 +35,7 @@ Easy Theme restyles the whole Unreal Editor in a calm, classic desktop style: sq
 
 ## Install
 
-1. Download `EasyTheme-0.2.0-UE5.8-Win64.zip` from [Releases](https://github.com/mapmodelers/ue5-theme-easy/releases/latest). It is prebuilt: no compiler needed.
+1. Download the `EasyTheme-…-UE5.8-Win64.zip` from [Releases](https://github.com/mapmodelers/ue5-theme-easy/releases/latest). It is prebuilt: no compiler needed.
 2. Unzip it into your project's `Plugins` folder (`MyProject/Plugins/EasyTheme`), or into `Engine/Plugins/Marketplace` for every project.
 3. Start the editor. The theme applies at startup.
 

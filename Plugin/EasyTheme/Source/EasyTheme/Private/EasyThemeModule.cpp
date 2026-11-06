@@ -27,6 +27,9 @@
 #include "Fonts/CompositeFont.h"
 #include "Fonts/SlateFontInfo.h"
 #include "Framework/Application/SlateApplication.h"
+#include "IDocumentation.h"
+#include "Widgets/SToolTip.h"
+#include "Widgets/SBoxPanel.h"
 #include "Framework/Docking/TabManager.h"
 #include "Framework/Docking/LayoutService.h"
 #include "Widgets/SWindow.h"
@@ -77,7 +80,9 @@ namespace EasyTheme
 	// Saved/EasyTheme/dev.flag exists: the repo's test project creates it, buyers never do.
 	static bool GDev = false;
 	static bool GDark = true;   // Dark is the default; Light is chosen from Window > Easy Theme.
-	static bool GLightGraphs = true;   // Light mode also lightens graph canvases (option in the menu).
+	static bool GLightGraphs = true;
+	static FString GVersion = TEXT("?");   // from EasyTheme.uplugin
+	static const TCHAR* GReleasesUrl = TEXT("https://github.com/mapmodelers/ue5-theme-easy/releases/latest");   // Light mode also lightens graph canvases (option in the menu).
 	static const TCHAR* GConfigSection = TEXT("EasyTheme");
 	static TSharedPtr<FSlateStyleSet> GResStyle;
 
@@ -202,7 +207,7 @@ namespace EasyTheme
 
 	static const FFlat GDarkFlat = { TEXT("2E2E2E"), TEXT("1A1A1A"), TEXT("4A4F58"),
 		TEXT("3A3A3A"), TEXT("1A1A1A"), TEXT("3D5A8C"), TEXT("6F8FC8"),
-		TEXT("4A4630"), TEXT("101010"), TEXT("2A2A2A"),
+		TEXT("F0F0F0"), TEXT("101010"), TEXT("2A2A2A"),
 		TEXT("262626"), TEXT("2C2C2C"), TEXT("3A404A"),
 		TEXT("3A3A3A"), TEXT("E6E6E6"), TEXT("808080"),
 		TEXT("262626"), TEXT("303030"), TEXT("3A3A3A"), TEXT("4A4A4A") };
@@ -943,6 +948,8 @@ namespace EasyTheme
 		PatchBrush(Sets, TEXT("WindowMenuBar.Button.SubMenuOpen"), MenuHot);
 		PatchBrush(Sets, TEXT("ToolTip.Background"), Tip);
 		PatchBrush(Sets, TEXT("ToolTip.BrightBackground"), Tip);
+		// Unreal draws tooltip text in hard-coded black (SToolTip, SDocumentationToolTip), so the
+		// tooltip stays light in both modes: classic yellow in Light, light grey in Dark.
 
 		FixLightText(Sets, Ink, FSlateColor(Hex(TEXT("505050"))));
 
@@ -1570,8 +1577,8 @@ namespace EasyTheme
 		IFileManager::Get().MakeDirectory(*Dir, true);
 		Shot(TEXT("screenshot.png"), Dir);
 		const FString Info = FString::Printf(
-			TEXT("Easy Theme 0.2.0\nUnreal Engine %s\nOS %s\nMode %s\nDPI scale %.2f\n"),
-			*FEngineVersion::Current().ToString(EVersionComponent::Patch), *FPlatformMisc::GetOSVersion(),
+			TEXT("Easy Theme %s\nUnreal Engine %s\nOS %s\nMode %s\nDPI scale %.2f\n"),
+			*GVersion, *FEngineVersion::Current().ToString(EVersionComponent::Patch), *FPlatformMisc::GetOSVersion(),
 			GDark ? TEXT("Dark") : TEXT("Light"), FSlateApplication::Get().GetApplicationScale());
 		FFileHelper::SaveStringToFile(Info, *(Dir / TEXT("info.txt")));
 		const FString Body = Info + TEXT("\nWhat happened:\n\nWhere (panel / window):\n\n")
@@ -1633,6 +1640,11 @@ namespace EasyTheme
 			FText::FromString(TEXT("Saves a screenshot and system info in Saved/EasyTheme/Issue, opens that folder and a pre-filled GitHub issue. Nothing is uploaded unless you attach it.")),
 			FSlateIcon(),
 			FUIAction(FExecuteAction::CreateLambda([]() { ReportIssue(); })));
+		Help.AddMenuEntry("EasyThemeUpdate",
+			FText::FromString(FString::Printf(TEXT("Check for Updates (you have %s)..."), *GVersion)),
+			FText::FromString(TEXT("Opens the latest release on GitHub in your browser. Easy Theme itself never connects to the internet.")),
+			FSlateIcon(),
+			FUIAction(FExecuteAction::CreateLambda([]() { FPlatformProcess::LaunchURL(GReleasesUrl, nullptr, nullptr); })));
 
 		FToolMenuSection& Clean = Sub->AddSection("EasyThemeClean", FText::FromString(TEXT("Uninstall")));
 		Clean.AddMenuEntry("EasyThemeRemove",
@@ -1666,10 +1678,11 @@ public:
 
 		TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("EasyTheme"));
 		GResDir = Plugin.IsValid() ? FPaths::ConvertRelativePathToFull(Plugin->GetBaseDir() / TEXT("Resources")) : FString();
+		if (Plugin.IsValid()) { GVersion = Plugin->GetDescriptor().VersionName; }
 		GConfig->GetBool(GConfigSection, TEXT("Dark"), GDark, GEditorSettingsIni);
 		GConfig->GetBool(GConfigSection, TEXT("LightGraphs"), GLightGraphs, GEditorSettingsIni);
 		GDev = IFileManager::Get().FileExists(*(ReportDir() / TEXT("dev.flag")));
-		Note(FString::Printf(TEXT("EasyTheme 0.2.0 - mode %s - resources %s"), GDark ? TEXT("dark") : TEXT("light"), *GResDir));
+		Note(FString::Printf(TEXT("EasyTheme %s - mode %s - resources %s"), *GVersion, GDark ? TEXT("dark") : TEXT("light"), *GResDir));
 
 		RegisterResources();
 		ApplyAll();
@@ -1756,6 +1769,36 @@ public:
 					{
 						TM->TryInvokeTab(Id);
 					}
+				})));
+			// Shows a plain and a documentation tooltip in a window and screenshots it (tips_N.png).
+			Cmds.Add(IConsoleManager::Get().RegisterConsoleCommand(
+				TEXT("EasyTheme.Tips"),
+				TEXT("Easy Theme (dev): screenshot sample tooltips"),
+				FConsoleCommandDelegate::CreateLambda([]()
+				{
+					const FText Txt = FText::FromString(TEXT("List of world Blueprints available to the user for editing or creation."));
+					TSharedRef<SWindow> W = SNew(SWindow).Title(FText::FromString(TEXT("EasyTheme Tips")))
+						.ClientSize(FVector2D(520.0, 220.0)).SupportsMaximize(false).SupportsMinimize(false)
+						[
+							SNew(SVerticalBox)
+							+ SVerticalBox::Slot().AutoHeight().Padding(10.f)[ SNew(SToolTip).Text(Txt) ]
+							+ SVerticalBox::Slot().AutoHeight().Padding(10.f)[ IDocumentation::Get()->CreateToolTip(Txt, nullptr, FString(), FString()) ]
+						];
+					FSlateApplication::Get().AddWindow(W);
+					FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([W](float)
+					{
+						TArray<FColor> Px; FIntVector Size;
+						if (FSlateApplication::Get().TakeScreenshot(W, Px, Size) && Px.Num())
+						{
+							for (FColor& C : Px) { C.A = 255; }
+							TArray64<uint8> Png;
+							FImageUtils::PNGCompressImageArray(Size.X, Size.Y, TArrayView64<const FColor>(Px.GetData(), Px.Num()), Png);
+							FFileHelper::SaveArrayToFile(Png, *(EasyTheme::ReportDir() / (EasyTheme::GDark ? TEXT("tips_dark.png") : TEXT("tips_light.png"))));
+							EasyTheme::Note(TEXT("OK   shot tips"));
+						}
+						W->RequestDestroyWindow();
+						return false;
+					}), 1.0f);
 				})));
 			Cmds.Add(IConsoleManager::Get().RegisterConsoleCommand(
 				TEXT("EasyTheme.Panes"),

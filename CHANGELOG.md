@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+- Dark: tooltips readable (Unreal draws tooltip text in black, so tooltips are now light grey in Dark).
+- Light: Details name field readable.
+- Engine-wide install now active in every project (packaged descriptor kept "EnabledByDefault").
+- Window > Easy Theme > Check for Updates (opens the GitHub releases page; no network access from the plugin).
+
 ## 0.2.0
 - Renamed to Easy Theme (from the internal "Theme 2001" prototype).
 - Dark is the default; Light included; live switch with UI refresh and optional restart.
