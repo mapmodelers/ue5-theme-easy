@@ -4,6 +4,8 @@
 
 **Clean, compact, high-clarity editor theme. Dark by default, Light included.**
 
+![Easy Theme for Unreal Engine, Dark and Light](docs/media/social.png)
+
 ![Easy Theme, Dark](docs/media/dark.png)
 
 Easy Theme restyles the whole Unreal Editor in a calm, classic desktop style: square controls, crisp 1-pixel frames and readable text in every panel. Switch between Dark and Light live from **Window > Easy Theme**.
