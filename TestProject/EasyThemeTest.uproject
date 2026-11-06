@@ -1,0 +1,12 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "5.8",
+	"Category": "",
+	"Description": "Test project for the Easy Theme editor plugin.",
+	"Plugins": [
+		{
+			"Name": "EasyTheme",
+			"Enabled": true
+		}
+	]
+}

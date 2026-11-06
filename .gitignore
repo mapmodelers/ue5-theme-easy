@@ -1,0 +1,14 @@
+_build/
+_run/
+_eng/
+Plugin/EasyTheme/Binaries/
+Plugin/EasyTheme/Intermediate/
+TestProject/Saved/
+TestProject/Intermediate/
+TestProject/DerivedDataCache/
+TestProject/Plugins/
+TestProject/Binaries/
+TestProject/Config/
+TestProject/Content/
+_tools/local.cmd
+Extras/Splash/

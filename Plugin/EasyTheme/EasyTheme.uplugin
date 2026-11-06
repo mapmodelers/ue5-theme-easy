@@ -1,0 +1,26 @@
+{
+	"FileVersion": 3,
+	"Version": 20,
+	"VersionName": "0.2.0",
+	"FriendlyName": "Easy Theme",
+	"Description": "Clean, compact, high-clarity editor theme. Dark by default, Light included, switch live from the Window menu.",
+	"Category": "Editor",
+	"CreatedBy": "MapModelers",
+	"CreatedByURL": "https://github.com/mapmodelers",
+	"DocsURL": "https://github.com/mapmodelers/ue5-theme-easy",
+	"SupportURL": "https://github.com/mapmodelers/ue5-theme-easy/issues",
+	"EngineVersion": "5.8.0",
+	"CanContainContent": true,
+	"IsBetaVersion": true,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"EnabledByDefault": true,
+	"Modules": [
+		{
+			"Name": "EasyTheme",
+			"Type": "Editor",
+			"LoadingPhase": "PostEngineInit",
+			"PlatformAllowList": [ "Win64" ]
+		}
+	]
+}
