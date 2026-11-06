@@ -49,7 +49,9 @@ From source: copy `Plugin/EasyTheme` instead (Visual Studio required, the editor
 | Window > Easy Theme > Light Graphs | Light canvas for graphs in Light mode (on by default) |
 | Window > Easy Theme > Refresh UI | Rebuild every panel in the current theme |
 | Window > Easy Theme > Use 3-Pane Layout | Optional compact layout (also in Window > Load Layout) |
-| Window > Easy Theme > Report an Issue... | Pre-filled GitHub issue + local screenshot to attach (optional) |
+| Window > Easy Theme > Toolbar in Tab Bar | Tabs and the main toolbar on one row, + button for recent levels and assets (on by default) |
+| Window > Easy Theme > Check for Updates | Asks GitHub for a newer release; GitHub installs can install it when Unreal closes |
+| Window > Easy Theme > Report a Bug... | Pre-filled GitHub issue + local screenshot and cleaned-up log to attach (optional) |
 | Window > Easy Theme > Remove Saved Settings | Delete the files Easy Theme saved |
 | Console `EasyTheme.Dark 1` / `0` | Same switch from the console |
 
@@ -71,7 +73,7 @@ Unreal Engine, UE5, editor theme, dark theme, light theme, compact UI, classic U
 
 ## Privacy and safety
 
-- No telemetry, no data collection. The only network access is **Check for Updates**, and only when you click it: it asks GitHub for the latest release and, if you accept, downloads it, checks its SHA-256 and installs it when Unreal closes (your previous version is kept as a backup in `Saved/EasyTheme/Update`). "Report an Issue" only opens your browser; you choose what to attach.
+- No telemetry, no data collection. The only network access is **Check for Updates**, and only when you click it: it asks GitHub for the latest release and, if you accept, downloads it, checks its SHA-256 and installs it when Unreal closes (your previous version is kept as a backup in `Saved/EasyTheme/Update`). "Report a Bug" only opens your browser and a local folder; you choose what to attach (the log has your user name and folders removed).
 - Editor-only: your game, your project content and the engine install are never modified.
 - Files it writes, all in your Unreal user folders:
   - the Dark/Light and Light Graphs choices, in the editor settings (`[EasyTheme]`)

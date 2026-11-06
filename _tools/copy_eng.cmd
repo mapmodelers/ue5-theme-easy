@@ -12,8 +12,10 @@ for /f "delims=" %%P in ('where /r "%E%\Source\Runtime\Slate" ToolBarStyle.h Tab
 for /f "delims=" %%P in ('where /r "%E%\Source\Runtime\SlateCore" ToolBarStyle.h SlateColor.h WidgetStyle.h 2^>nul') do copy /y "%%P" "%D%\" >nul
 for /f "delims=" %%P in ('where /r "%E%\Source\Editor\UnrealEd" UnrealEdGlobals.h AssetEditorSubsystem.h 2^>nul') do copy /y "%%P" "%D%\" >nul
 for /f "delims=" %%P in ('where /r "%E%\Source\Editor\GraphEditor" SNodePanel.cpp SGraphPin.cpp SGraphNode.cpp GraphEditorSettings.h 2^>nul') do copy /y "%%P" "%D%\" >nul
-for /f "delims=" %%P in ('where /r "%E%\Source\Editor" AssetViewWidgets.cpp AssetViewWidgets.h EditorStyleSettings.h SGraphPanel.cpp SGraphEditorImpl.cpp ConnectionDrawingPolicy.cpp SGraphNodeComment.cpp SGraphNodeK2Base.cpp SMaterialEditorSubstrateWidget.cpp SMaterialEditorSubstrateWidget.h SDocumentationToolTip.cpp 2^>nul') do copy /y "%%P" "%D%\" >nul
-for /f "delims=" %%P in ('where /r "%E%\Source\Runtime\Slate" SMenuEntryBlock.cpp SToolTip.cpp SToolTip.h SlateTextHighlightRunRenderer.cpp MultiBox.cpp SMultiBoxWidget.cpp 2^>nul') do copy /y "%%P" "%D%\" >nul
+for /f "delims=" %%P in ('where /r "%E%\Source\Editor" AssetViewWidgets.cpp AssetViewWidgets.h EditorStyleSettings.h SGraphPanel.cpp SGraphEditorImpl.cpp ConnectionDrawingPolicy.cpp SGraphNodeComment.cpp SGraphNodeK2Base.cpp SMaterialEditorSubstrateWidget.cpp SMaterialEditorSubstrateWidget.h SDocumentationToolTip.cpp MainMRUFavoritesList.h MainMRUFavoritesList.cpp MRUFavoritesList.h IMainFrameModule.h AssetEditorSubsystem.cpp MaterialGraphSchema.h MaterialGraphConnectionDrawingPolicy.cpp SStandaloneAssetEditorToolkitHost.cpp SStandaloneAssetEditorToolkitHost.h AssetEditorToolkit.cpp 2^>nul') do copy /y "%%P" "%D%\" >nul
+for /f "delims=" %%P in ('where /r "%E%\Source\Runtime\Slate" SMenuEntryBlock.cpp SDockTab.h SDockTab.cpp SDockingTabStack.cpp SDockingTabStack.h SDockingTabWell.cpp SWindowTitleBar.h TabManager.cpp SToolTip.cpp SToolTip.h SlateTextHighlightRunRenderer.cpp MultiBox.cpp SMultiBoxWidget.cpp 2^>nul') do copy /y "%%P" "%D%\" >nul
+for /f "delims=" %%P in ('where /r "%E%\Source\Runtime\SlateCore" SWindow.h SWindow.cpp 2^>nul') do copy /y "%%P" "%D%\" >nul
+for /f "delims=" %%P in ('where /r "%E%\Source\Developer\ToolMenus" ToolMenus.cpp 2^>nul') do copy /y "%%P" "%D%\" >nul
 if not exist "%D%\Themes" mkdir "%D%\Themes"
 copy /y "%E%\Content\Slate\Themes\*.json" "%D%\Themes\" >nul 2>&1
 if not exist "%D%\Splash" mkdir "%D%\Splash"

@@ -20,7 +20,8 @@ public class EasyTheme : ModuleRules
 			"ToolMenus",
 			"UnrealEd",
 			"HTTP",
-			"Json"
+			"Json",
+			"MainFrame"
 		});
 	}
 }

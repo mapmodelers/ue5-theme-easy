@@ -30,6 +30,14 @@
 #include "IDocumentation.h"
 #include "Widgets/SToolTip.h"
 #include "Widgets/SBoxPanel.h"
+#include "Widgets/Layout/SBox.h"
+#include "ILevelEditor.h"
+#include "Widgets/Input/SComboButton.h"
+#include "Widgets/Images/SImage.h"
+#include "FileHelpers.h"
+#include "Interfaces/IMainFrameModule.h"
+#include "MRUFavoritesList.h"
+#include "Misc/PackageName.h"
 #include "Framework/Docking/TabManager.h"
 #include "Framework/Docking/LayoutService.h"
 #include "Widgets/SWindow.h"
@@ -68,6 +76,8 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "HAL/PlatformProcess.h"
+#include "HAL/PlatformOutputDevices.h"
+#include "Internationalization/Regex.h"
 
 #include "GenericPlatform/ICursor.h"
 #if PLATFORM_WINDOWS
@@ -90,7 +100,8 @@ namespace EasyTheme
 	static bool GDev = false;
 	static bool GDark = true;   // Dark is the default; Light is chosen from Window > Easy Theme.
 	static bool GLightGraphs = true;
-	static FString GVersion = TEXT("?");   // from EasyTheme.uplugin
+	static FString GVersion = TEXT("?");
+	static bool GToolbarInTitle = true;   // level toolbar moved into the tab bar (option "Toolbar in Tab Bar")   // from EasyTheme.uplugin
 	static const TCHAR* GReleasesUrl = TEXT("https://github.com/mapmodelers/ue5-theme-easy/releases/latest");   // Light mode also lightens graph canvases (option in the menu).
 	static const TCHAR* GConfigSection = TEXT("EasyTheme");
 	static TSharedPtr<FSlateStyleSet> GResStyle;
@@ -806,6 +817,14 @@ namespace EasyTheme
 				T.BackgroundPadding = Shrink(T.BackgroundPadding, GPadX, GPadY);
 				T.SetIconSize(FVector2D(16.0, 16.0));
 			}
+			// Same height as a tab (27 px) so toolbars line up with the tabs in the tab row:
+			// no vertical padding around blocks, 2 px inside buttons.
+			auto Vert = [](FMargin M, float V) { M.Top = V; M.Bottom = V; return M; };
+			T.BackgroundPadding = Vert(T.BackgroundPadding, 0.f);
+			T.BlockPadding = Vert(T.BlockPadding, 0.f);
+			T.ButtonPadding = Vert(T.ButtonPadding, 2.f);
+			T.ComboButtonPadding = Vert(T.ComboButtonPadding, 2.f);
+			T.CheckBoxPadding = Vert(T.CheckBoxPadding, 2.f);
 			ToolButton(T.ButtonStyle);
 			// Toolbar buttons: faint outline at rest (also when disabled), full bevel on hover.
 			T.ButtonStyle.Normal = ToolIdle; T.ButtonStyle.Disabled = ToolIdle;
@@ -1552,6 +1571,7 @@ namespace EasyTheme
 	{
 		ForgetGraphColors();
 		GConfig->RemoveKey(GConfigSection, TEXT("Dark"), GEditorSettingsIni);
+		GConfig->RemoveKey(GConfigSection, TEXT("ToolbarInTabBar"), GEditorSettingsIni);
 		GConfig->Flush(false, GEditorSettingsIni);
 		IFileManager::Get().Delete(*PanesLayoutFile(), false, true, true);
 		FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(
@@ -1748,25 +1768,102 @@ namespace EasyTheme
 		GPending.Reset();
 	}
 
+	// The editor log, cut down to what helps (Easy Theme lines, warnings, errors, the last 150 lines)
+	// and scrubbed: user name, computer name, home, project and engine folders are replaced.
+	static FString ScrubbedLog()
+	{
+		if (GLog) { GLog->Flush(); }
+		TArray<uint8> Bytes;
+		if (TUniquePtr<FArchive> Ar{ IFileManager::Get().CreateFileReader(*FString(FPlatformOutputDevices::GetAbsoluteLogFilename()), FILEREAD_AllowWrite) })
+		{
+			Bytes.SetNumUninitialized((int32)FMath::Min<int64>(Ar->TotalSize(), 64 * 1024 * 1024));
+			Ar->Serialize(Bytes.GetData(), Bytes.Num());
+		}
+		FString All;
+		if (Bytes.Num()) { FFileHelper::BufferToString(All, Bytes.GetData(), Bytes.Num()); }
+		TArray<FString> Lines;
+		All.ParseIntoArrayLines(Lines, false);
+
+		TArray<TPair<FString, FString>> Subs;
+		auto AddPath = [&Subs](FString Path, const TCHAR* Tag)
+		{
+			if (Path.Len() < 4) { return; }
+			Path = FPaths::ConvertRelativePathToFull(Path);
+			FPaths::NormalizeDirectoryName(Path);
+			Subs.Add(TPair<FString, FString>(Path, Tag));
+			Subs.Add(TPair<FString, FString>(Path.Replace(TEXT("/"), TEXT("\\")), Tag));
+		};
+		{
+			FString Rel = FPaths::ProjectDir();   // as Unreal prints it, relative to the engine binaries
+			FPaths::NormalizeDirectoryName(Rel);
+			if (Rel.StartsWith(TEXT(".."))) { Subs.Add(TPair<FString, FString>(Rel, TEXT("<Project>"))); }
+		}
+		AddPath(FPaths::ProjectDir(), TEXT("<Project>"));
+		AddPath(FPaths::EngineDir(), TEXT("<Engine>"));
+		AddPath(FPlatformMisc::GetEnvironmentVariable(TEXT("USERPROFILE")), TEXT("<Home>"));
+		const FString User = FPlatformProcess::UserName(false);
+		const FString Pc = FPlatformProcess::ComputerName();
+		if (User.Len() >= 3) { Subs.Add(TPair<FString, FString>(User, TEXT("<user>"))); }
+		if (Pc.Len() >= 3) { Subs.Add(TPair<FString, FString>(Pc, TEXT("<pc>"))); }
+		static const TCHAR* Drop[] = { TEXT("Login ID"), TEXT("Epic Account"), TEXT("LogInit: User:"), TEXT("LogInit: Computer:"), TEXT("Machine ID"), TEXT("SessionId"), TEXT("Session ID") };
+
+		const FRegexPattern DrivePath(TEXT("(?<![A-Za-z0-9])[A-Za-z]:[\\\\/][^\\s\"'<>|*?]*[\\\\/]"));
+		const FRegexPattern ClimbPath(TEXT("(?:\\.\\.[\\\\/]){4,}[^\\s\"'<>|*?]*[\\\\/]"));
+		TArray<FString> Keep;
+		const int32 TailFrom = FMath::Max(0, Lines.Num() - 150);
+		for (int32 i = 0; i < Lines.Num(); ++i)
+		{
+			const FString& L = Lines[i];
+			const bool bUseful = i >= TailFrom || i < 25 || L.Contains(TEXT("EasyTheme")) || L.Contains(TEXT("Warning:")) || L.Contains(TEXT("Error:")) || L.Contains(TEXT("Ensure"));
+			if (!bUseful) { continue; }
+			bool bDrop = false;
+			for (const TCHAR* D : Drop) { if (L.Contains(D)) { bDrop = true; break; } }
+			if (bDrop) { continue; }
+			FString Clean = L;
+			for (const TPair<FString, FString>& S : Subs) { Clean.ReplaceInline(*S.Key, *S.Value, ESearchCase::IgnoreCase); }
+			// Any other folder (drive paths, relative paths climbing out of the engine): keep the file name only.
+			for (const FRegexPattern* Pat : { &DrivePath, &ClimbPath })
+			{
+				FRegexMatcher M(*Pat, Clean);
+				FString Out;
+				int32 Last = 0;
+				while (M.FindNext()) { Out += Clean.Mid(Last, M.GetMatchBeginning() - Last) + TEXT("<path>/"); Last = M.GetMatchEnding(); }
+				if (Last > 0) { Clean = Out + Clean.Mid(Last); }
+			}
+			Keep.Add(MoveTemp(Clean));
+		}
+		if (Keep.Num() > 1500) { Keep.RemoveAt(25, Keep.Num() - 1500); }
+		return FString::Join(Keep, TEXT("\n"));
+	}
+
 	// Private by default: files are written locally for the user to review and attach by hand;
-	// nothing is uploaded. No logs (they contain user names and paths).
-	static void ReportIssue()
+	// nothing is uploaded. bOpen = false is for tests (no browser, no Explorer).
+	static void ReportIssue(bool bOpen = true)
 	{
 		const FString Dir = ReportDir() / TEXT("Issue");
 		IFileManager::Get().MakeDirectory(*Dir, true);
 		Shot(TEXT("screenshot.png"), Dir);
+		FFileHelper::SaveStringToFile(ScrubbedLog(), *(Dir / TEXT("log.txt")), FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+		TSharedPtr<SWindow> W = FGlobalTabmanager::Get()->GetRootWindow();
+		const FVector2D Px = W.IsValid() ? W->GetSizeInScreen() : FVector2D::ZeroVector;
 		const FString Info = FString::Printf(
-			TEXT("Easy Theme %s\nUnreal Engine %s\nOS %s\nMode %s\nDPI scale %.2f\n"),
+			TEXT("Easy Theme %s\nUnreal Engine %s\nOS %s\nMode %s, Light Graphs %s, Toolbar in Tab Bar %s\nWindow %.0fx%.0f, DPI scale %.2f\n"),
 			*GVersion, *FEngineVersion::Current().ToString(EVersionComponent::Patch), *FPlatformMisc::GetOSVersion(),
-			GDark ? TEXT("Dark") : TEXT("Light"), FSlateApplication::Get().GetApplicationScale());
+			GDark ? TEXT("Dark") : TEXT("Light"), GLightGraphs ? TEXT("on") : TEXT("off"), GToolbarInTitle ? TEXT("on") : TEXT("off"),
+			Px.X, Px.Y, FSlateApplication::Get().GetApplicationScale());
 		FFileHelper::SaveStringToFile(Info, *(Dir / TEXT("info.txt")));
+		Note(FString::Printf(TEXT("OK   bug report in %s"), *Dir));
+		if (!bOpen) { return; }
 		const FString Body = Info + TEXT("\nWhat happened:\n\nWhere (panel / window):\n\n")
-			+ TEXT("Screenshot: drag screenshot.png from the folder Easy Theme just opened (optional).\n");
+			+ TEXT("Attach: drag screenshot.png and log.txt from the folder Easy Theme just opened. ")
+			+ TEXT("Your user name and folders are removed from the log; have a look before posting.\n");
 		const FString Url = FString(TEXT("https://github.com/mapmodelers/ue5-theme-easy/issues/new?title="))
 			+ UrlEncode(TEXT("[Bug] ")) + TEXT("&body=") + UrlEncode(Body);
-		FPlatformProcess::ExploreFolder(*FPaths::ConvertRelativePathToFull(Dir));
+		FPlatformProcess::ExploreFolder(*(Dir / TEXT("log.txt")));
 		FPlatformProcess::LaunchURL(*Url, nullptr, nullptr);
 	}
+
+	static void SetToolbarInTitle(bool bOn);
 
 	static void FillMenu(UToolMenu* Sub)
 	{
@@ -1812,11 +1909,19 @@ namespace EasyTheme
 			FText::FromString(TEXT("Viewport, Content Browser docked below, Outliner over Details on the right.")),
 			FSlateIcon(),
 			FUIAction(FExecuteAction::CreateLambda([]() { UsePanesLayout(); })));
+		Layout.AddMenuEntry("EasyThemeTitleToolbar",
+			FText::FromString(TEXT("Toolbar in Tab Bar")),
+			FText::FromString(TEXT("One row for tabs and the main toolbar (Save, Mode, Add, Play...), with a + button for recent levels and assets. Frees a row for the viewport.")),
+			FSlateIcon(),
+			FUIAction(FExecuteAction::CreateLambda([]() { SetToolbarInTitle(!GToolbarInTitle); }),
+				FCanExecuteAction(),
+				FIsActionChecked::CreateLambda([]() { return GToolbarInTitle; })),
+			EUserInterfaceActionType::ToggleButton);
 
 		FToolMenuSection& Help = Sub->AddSection("EasyThemeHelp", FText::FromString(TEXT("Help")));
 		Help.AddMenuEntry("EasyThemeReport",
-			FText::FromString(TEXT("Report an Issue...")),
-			FText::FromString(TEXT("Saves a screenshot and system info in Saved/EasyTheme/Issue, opens that folder and a pre-filled GitHub issue. Nothing is uploaded unless you attach it.")),
+			FText::FromString(TEXT("Report a Bug...")),
+			FText::FromString(TEXT("Saves a screenshot, a cleaned-up log (no user name or folders) and system info in Saved/EasyTheme/Issue, then opens that folder and a pre-filled GitHub issue. Nothing is uploaded unless you attach it.")),
 			FSlateIcon(),
 			FUIAction(FExecuteAction::CreateLambda([]() { ReportIssue(); })));
 		const bool bCanInstall = IFileManager::Get().FileExists(*UpdaterScript());
@@ -1836,6 +1941,327 @@ namespace EasyTheme
 			FUIAction(FExecuteAction::CreateLambda([]() { RemoveSavedSettings(); })));
 	}
 
+	// ---------------------------------------------------------------- toolbar in the tab bar
+	// One row for tabs and toolbars. For every editor tab in the main window's tab row (level
+	// editor and docked asset editors), that editor's own toolbar widget is moved from its row
+	// into the tab row, right after the tabs, with a "+" button for recent levels and assets.
+	// Every tab gets the same layout and width, so switching tabs keeps everything at the same
+	// pixels (only the toolbar buttons change). Tabs get an adaptive width. Off: back to stock.
+	// Checked every half second: editors rebuild their toolbars and content.
+	struct FTabBarState
+	{
+		TWeakPtr<SDockTab> Tab;
+		TSharedPtr<SWidget> Toolbar;     // the moved toolbar (null if this editor has none)
+		TWeakPtr<SVerticalBox> Box;      // its original parent
+		TWeakPtr<SWidget> Content;       // our content right of the tabs
+		TSharedPtr<SWidget> OrigRight;   // what the tab had there before
+	};
+	static TArray<FTabBarState> GTabBars;
+
+	static TSharedPtr<SWidget> FindByType(const TSharedRef<SWidget>& Root, const FName Type, int32 MaxDepth,
+		TFunctionRef<bool(const TSharedRef<SWidget>&)> Accept)
+	{
+		TArray<TPair<TSharedRef<SWidget>, int32>> Q;
+		Q.Add(TPair<TSharedRef<SWidget>, int32>(Root, 0));
+		for (int32 i = 0; i < Q.Num(); ++i)
+		{
+			const TSharedRef<SWidget> W = Q[i].Key;
+			if (W->GetType() == Type && Accept(W)) { return W; }
+			FChildren* C = W->GetChildren();
+			if (!C || Q[i].Value >= MaxDepth) { continue; }
+			for (int32 k = 0; k < C->Num(); ++k) { Q.Add(TPair<TSharedRef<SWidget>, int32>(C->GetChildAt(k), Q[i].Value + 1)); }
+		}
+		return nullptr;
+	}
+
+	// Editor content: SVerticalBox [ toolbar, (level editor: secondary mode toolbar), docking area ]
+	static TSharedPtr<SVerticalBox> FindToolbarBox(const TSharedRef<SWidget>& TabContent)
+	{
+		TSharedPtr<SWidget> W = FindByType(TabContent, FName(TEXT("SVerticalBox")), 7,
+			[](const TSharedRef<SWidget>& V)
+			{
+				FChildren* C = V->GetChildren();
+				return C && (C->Num() == 2 || C->Num() == 3) && C->GetChildAt(C->Num() - 1)->GetType() == FName(TEXT("SDockingArea"));
+			});
+		return W.IsValid() ? StaticCastSharedPtr<SVerticalBox>(W) : nullptr;
+	}
+
+	static void SetBoxPadding(const TSharedPtr<SVerticalBox>& Box, float Bottom)
+	{
+		if (!Box.IsValid()) { return; }
+		const int32 N = Box->GetChildren()->Num();
+		for (int32 i = 0; i < N - 1; ++i) { Box->GetSlot(i).SetPadding(FMargin(0.f, 0.f, 0.f, Bottom)); }
+	}
+
+	// Tab width depends only on the row width and the number of tabs (never on the editor in
+	// front, so switching tabs moves nothing): about 7.5% of the row, but all tabs together take
+	// at most half of it so the toolbar keeps room; 72 to 180 px, labels may clip.
+	// Unreal gives every tab the same slot, so icon-only tabs (Home) leave a gap: TabBarShift()
+	// moves our content left by that much so "+" sits right after the last tab.
+	static float TabW(float RowW, int32 N)
+	{
+		return FMath::Clamp(FMath::Min(RowW * 0.075f, RowW * 0.5f / FMath::Max(1, N)), 72.f, 180.f);
+	}
+
+	static FOptionalSize TabBarWidth(TWeakPtr<SWidget> Weak)
+	{
+		TSharedPtr<SWidget> W = Weak.Pin();
+		TSharedPtr<SWidget> Row = W.IsValid() ? W->GetParentWidget() : nullptr;
+		FChildren* C = Row.IsValid() ? Row->GetChildren() : nullptr;
+		if (!C || C->Num() < 3) { return FOptionalSize(); }
+		const float RowW = Row->GetTickSpaceGeometry().GetLocalSize().X;
+		int32 N = 1;
+		if (TSharedPtr<SWidget> Well = FindByType(C->GetChildAt(1), FName(TEXT("SDockingTabWell")), 4, [](const TSharedRef<SWidget>&) { return true; }))
+		{
+			N = FMath::Max(1, Well->GetChildren()->Num());
+		}
+		const float Tabs = N * TabW(RowW, N);
+		// Correct from the last layout: the tab well should be exactly Tabs wide.
+		const float WellW = C->GetChildAt(1)->GetTickSpaceGeometry().GetLocalSize().X;
+		const float OursW = W->GetTickSpaceGeometry().GetLocalSize().X;
+		if (OursW <= 0.f || WellW <= 0.f)
+		{
+			return FMath::Max(0.f, RowW - C->GetChildAt(0)->GetTickSpaceGeometry().GetLocalSize().X - Tabs - 12.f);
+		}
+		// Never squeeze "+" and the toolbar's overflow button out (many tabs on a small screen):
+		// past that point the tabs shrink instead, Unreal's own way.
+		return FMath::Clamp(OursW + (WellW - Tabs), FMath::Min(120.f, RowW * 0.5f), RowW);
+	}
+
+	static FMargin TabBarShift(TWeakPtr<SWidget> Weak)
+	{
+		TSharedPtr<SWidget> W = Weak.Pin();
+		TSharedPtr<SWidget> Row = W.IsValid() ? W->GetParentWidget() : nullptr;
+		FChildren* C = Row.IsValid() ? Row->GetChildren() : nullptr;
+		if (!C || C->Num() < 3) { return FMargin(0.f); }
+		TSharedPtr<SWidget> Well = FindByType(C->GetChildAt(1), FName(TEXT("SDockingTabWell")), 4, [](const TSharedRef<SWidget>&) { return true; });
+		if (!Well.IsValid()) { return FMargin(0.f); }
+		FChildren* T = Well->GetChildren();
+		const int32 N = FMath::Max(1, T->Num());
+		const float Slot = Well->GetTickSpaceGeometry().GetLocalSize().X / N;
+		float Gap = 0.f;
+		for (int32 i = 0; i < T->Num(); ++i)
+		{
+			TSharedRef<SDockTab> Tab = StaticCastSharedRef<SDockTab>(T->GetChildAt(i));
+			if (Tab->IsTabNameHidden()) { Gap += FMath::Max(0.f, Slot - (Tab->CanCloseTab() ? 53.f : 32.f)); }
+		}
+		return FMargin(-Gap, 0.f, 0.f, 0.f);
+	}
+
+	static void OpenRecentLevel(const FString& Item)
+	{
+		FString File = Item;
+		if (FPackageName::IsValidLongPackageName(Item)) { File = FPackageName::LongPackageNameToFilename(Item, FPackageName::GetMapPackageExtension()); }
+		if (!FEditorFileUtils::SaveDirtyPackages(true, true, false)) { return; }   // user cancelled
+		FEditorFileUtils::LoadMap(File, false, true);
+	}
+
+	// "+" menu: recent levels, then recent assets (Unreal's own lists).
+	static void FillRecentMenu(UToolMenu* Menu)
+	{
+		FToolMenuSection& Levels = Menu->AddSection("EasyThemeRecentLevels", FText::FromString(TEXT("Recent Levels")));
+		int32 Added = 0;
+		if (FMainMRUFavoritesList* MRU = FModuleManager::LoadModuleChecked<IMainFrameModule>(TEXT("MainFrame")).GetMRUFavoritesList())
+		{
+			for (int32 i = 0; i < MRU->GetNumItems() && Added < 12; ++i)
+			{
+				const FString Item = MRU->GetMRUItem(i);
+				Levels.AddMenuEntry(NAME_None, FText::FromString(FPaths::GetBaseFilename(Item)),
+					FText::FromString(Item + TEXT("\nOpens in place of the current level (Unreal edits one level at a time).")),
+					FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Level"),
+					FUIAction(FExecuteAction::CreateLambda([Item]() { OpenRecentLevel(Item); })));
+				++Added;
+			}
+		}
+		if (Added == 0)
+		{
+			Levels.AddMenuEntry(NAME_None, FText::FromString(TEXT("No recent levels")), FText::GetEmpty(), FSlateIcon(),
+				FUIAction(FExecuteAction(), FCanExecuteAction::CreateLambda([]() { return false; })));
+		}
+		FToolMenuSection& Assets = Menu->AddSection("EasyThemeRecentAssets", FText::FromString(TEXT("Recent Assets")));
+		UAssetEditorSubsystem* AES = GEditor ? GEditor->GetEditorSubsystem<UAssetEditorSubsystem>() : nullptr;
+		FMainMRUFavoritesList* Recent = AES ? AES->GetRecentlyOpenedAssets() : nullptr;
+		int32 AssetsAdded = 0;
+		for (int32 i = 0; Recent && i < Recent->GetNumItems() && AssetsAdded < 15; ++i)
+		{
+			FSoftObjectPath Path(Recent->GetMRUItem(i));
+			if (Path.GetAssetFName().IsNone())
+			{
+				const FName Pkg = Path.GetLongPackageFName();
+				Path = FSoftObjectPath::ConstructFromAssetPath(FTopLevelAssetPath(Pkg, FPackageName::GetShortFName(Pkg)));
+			}
+			Assets.AddMenuEntry(NAME_None, FText::FromString(Path.GetAssetName()), FText::FromString(Path.ToString() + TEXT("\nOpens in its own editor tab.")), FSlateIcon(),
+				FUIAction(FExecuteAction::CreateLambda([Path]()
+				{
+					UAssetEditorSubsystem* Sub = GEditor ? GEditor->GetEditorSubsystem<UAssetEditorSubsystem>() : nullptr;
+					if (UObject* Obj = Path.TryLoad()) { if (Sub) { Sub->OpenEditorForAsset(Obj); } }
+				})));
+			++AssetsAdded;
+		}
+		if (AssetsAdded == 0)
+		{
+			Assets.AddMenuEntry(NAME_None, FText::FromString(TEXT("No recent assets")), FText::GetEmpty(), FSlateIcon(),
+				FUIAction(FExecuteAction(), FCanExecuteAction::CreateLambda([]() { return false; })));
+		}
+	}
+
+	static TSharedRef<SWidget> MakeTabBarContent(const FTabBarState& S)
+	{
+		TSharedRef<SWidget> Plus = SNew(SComboButton)
+			.ComboButtonStyle(&FAppStyle::Get().GetWidgetStyle<FComboButtonStyle>("SimpleComboButton"))
+			.HasDownArrow(false)
+			.ContentPadding(FMargin(4.f, 2.f))
+			.ToolTipText(FText::FromString(TEXT("Open a recent level or asset")))
+			.OnGetMenuContent_Lambda([]() { return UToolMenus::Get()->GenerateWidget("EasyTheme.Recent", FToolMenuContext()); })
+			.ButtonContent()
+			[
+				SNew(SImage).Image(FAppStyle::Get().GetBrush("Icons.Plus")).ColorAndOpacity(FSlateColor::UseForeground())
+			];
+		TSharedRef<SBox> Box = SNew(SBox);
+		TWeakPtr<SWidget> Weak = Box;
+		TWeakPtr<SWidget> WeakPlus = Plus;
+		const bool bRight = S.OrigRight.IsValid() && S.OrigRight != SNullWidget::NullWidget;
+		TWeakPtr<SWidget> WeakRight = bRight ? TWeakPtr<SWidget>(S.OrigRight) : TWeakPtr<SWidget>();
+		// When the row is full the toolbar gets what is left and shows Unreal's own ">>" overflow
+		// button for the rest, instead of running off the window.
+		TSharedRef<SBox> Fit = SNew(SBox)
+			.MaxDesiredWidth(TAttribute<FOptionalSize>::CreateLambda([Weak, WeakPlus, WeakRight]()
+			{
+				TSharedPtr<SWidget> B = Weak.Pin();
+				TSharedPtr<SWidget> P = WeakPlus.Pin();
+				if (!B.IsValid() || !P.IsValid()) { return FOptionalSize(); }
+				const float BoxW = B->GetTickSpaceGeometry().GetLocalSize().X;
+				if (BoxW <= 0.f) { return FOptionalSize(); }
+				TSharedPtr<SWidget> R = WeakRight.Pin();
+				const float Used = TabBarShift(Weak).Left + P->GetDesiredSize().X + 8.f + (R.IsValid() ? R->GetDesiredSize().X : 0.f) + 4.f;
+				return FOptionalSize(FMath::Max(32.f, BoxW - Used));
+			}))
+			[ S.Toolbar.IsValid() ? S.Toolbar.ToSharedRef() : SNullWidget::NullWidget ];
+		TSharedRef<SHorizontalBox> Row = SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+				.Padding(TAttribute<FMargin>::CreateLambda([Weak]() { return TabBarShift(Weak); }))[ Plus ]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Bottom).Padding(FMargin(8.f, 0.f, 0.f, 0.f))[ Fit ]
+			+ SHorizontalBox::Slot().FillWidth(1.f)[ SNullWidget::NullWidget ];
+		if (bRight)
+		{
+			Row->AddSlot().AutoWidth().VAlign(VAlign_Center)[ S.OrigRight.ToSharedRef() ];
+		}
+		Box->SetContent(Row);
+		const TAttribute<FOptionalSize> Width = TAttribute<FOptionalSize>::CreateLambda([Weak]() { return TabBarWidth(Weak); });
+		Box->SetMinDesiredWidth(Width);
+		Box->SetMaxDesiredWidth(Width);
+		// One fixed row height for every editor (their toolbars differ by a few pixels), so the
+		// content below starts at the same pixel whatever tab is in front.
+		Box->SetHeightOverride(28.f);
+		return Box;
+	}
+
+	static FTabBarState* FindState(const TSharedRef<SDockTab>& Tab)
+	{
+		for (FTabBarState& S : GTabBars) { if (S.Tab.Pin() == Tab) { return &S; } }
+		return nullptr;
+	}
+
+	static void EnsureToolbarInTitle()
+	{
+		if (!GToolbarInTitle) { return; }
+		GTabBars.RemoveAll([](const FTabBarState& S) { return !S.Tab.IsValid(); });
+		if (!FModuleManager::Get().IsModuleLoaded(TEXT("LevelEditor"))) { return; }
+		TSharedPtr<ILevelEditor> LE = FModuleManager::GetModuleChecked<FLevelEditorModule>(TEXT("LevelEditor")).GetFirstLevelEditor();
+		TSharedPtr<FTabManager> TM = LE.IsValid() ? LE->GetTabManager() : nullptr;
+		TSharedPtr<SDockTab> LevelTab = TM.IsValid() ? TM->GetOwnerTab() : nullptr;
+		// The main window's tab row: the tab well holding the level editor tab.
+		TSharedPtr<SWidget> Well = LevelTab.IsValid() ? LevelTab->GetParentWidget() : nullptr;
+		if (!Well.IsValid() || Well->GetType() != FName(TEXT("SDockingTabWell")))
+		{
+			static bool bWarned = false;
+			if (GDev && !bWarned) { bWarned = true; Note(FString::Printf(TEXT("MISS tab row: level tab parent is %s"), Well.IsValid() ? *Well->GetTypeAsString() : TEXT("none"))); }
+			return;
+		}
+		FChildren* Tabs = Well->GetChildren();
+		for (int32 i = 0; i < Tabs->Num(); ++i)
+		{
+			TSharedRef<SDockTab> Tab = StaticCastSharedRef<SDockTab>(Tabs->GetChildAt(i));
+			if (Tab->IsTabNameHidden()) { continue; }   // Home
+			FTabBarState* S = FindState(Tab);
+			if (!S) { FTabBarState New; New.Tab = Tab; S = &GTabBars.Add_GetRef(New); }
+
+			// 1. toolbar out of its row (again, if the editor rebuilt it)
+			bool bChanged = false;
+			// Cached box while it lives (a rebuilt editor gets a new one); search only otherwise.
+			TSharedPtr<SVerticalBox> Box = S->Box.Pin();
+			if (!Box.IsValid()) { Box = FindToolbarBox(Tab->GetContent()); }
+			if (Box.IsValid())
+			{
+				TSharedRef<SWidget> First = Box->GetChildren()->GetChildAt(0);
+				if (First != SNullWidget::NullWidget || S->Box.Pin() != Box)
+				{
+					if (First != SNullWidget::NullWidget) { S->Toolbar = First; }
+					S->Box = Box;
+					Box->GetSlot(0).AttachWidget(SNullWidget::NullWidget);
+					SetBoxPadding(Box, 0.f);
+					bChanged = true;
+					if (GDev) { Note(FString::Printf(TEXT("OK   toolbar to tab row: %s (%s)"), *Tab->GetTabLabel().ToString(), *First->GetTypeAsString())); }
+				}
+			}
+
+			// 2. our content right of the tabs
+			TSharedPtr<SWidget> Ours = S->Content.Pin();
+			if (!bChanged && Ours.IsValid() && Tab->GetRightContent() == Ours)
+			{
+				static TSet<FString> Reported;
+				const FString Key = Tab->GetTabLabel().ToString();
+				if (GDev && !Reported.Contains(Key) && Ours->GetTickSpaceGeometry().GetLocalSize().Y > 0.f)
+				{
+					Reported.Add(Key);
+					FString D = FString::Printf(TEXT("     tabrow %s: row %.0f tab %.0f toolbar %.0f |"), *Key,
+						Ours->GetTickSpaceGeometry().GetLocalSize().Y, Tab->GetDesiredSize().Y, S->Toolbar.IsValid() ? S->Toolbar->GetDesiredSize().Y : 0.f);
+					// toolbar children heights (blocks)
+					if (S->Toolbar.IsValid())
+					{
+						TSharedPtr<SWidget> MB = FindByType(S->Toolbar.ToSharedRef(), FName(TEXT("SMultiBoxWidget")), 6, [](const TSharedRef<SWidget>&) { return true; });
+						if (MB.IsValid()) { D += FString::Printf(TEXT(" multibox %.0f"), MB->GetDesiredSize().Y); }
+					}
+					Note(D);
+				}
+				continue;
+			}
+			if (!Ours.IsValid() || Tab->GetRightContent() != Ours) { S->OrigRight = Tab->GetRightContent(); }
+			TSharedRef<SWidget> Content = MakeTabBarContent(*S);
+			S->Content = Content;
+			Tab->SetRightContent(Content);
+		}
+	}
+
+	static void RestoreToolbarRow()
+	{
+		for (FTabBarState& S : GTabBars)
+		{
+			if (TSharedPtr<SDockTab> Tab = S.Tab.Pin())
+			{
+				Tab->SetRightContent(S.OrigRight.IsValid() ? S.OrigRight.ToSharedRef() : SNullWidget::NullWidget);
+			}
+			TSharedPtr<SVerticalBox> Box = S.Box.Pin();
+			if (Box.IsValid())
+			{
+				if (S.Toolbar.IsValid() && Box->GetChildren()->GetChildAt(0) == SNullWidget::NullWidget)
+				{
+					Box->GetSlot(0).AttachWidget(S.Toolbar.ToSharedRef());
+				}
+				SetBoxPadding(Box, 2.f);
+			}
+		}
+		GTabBars.Reset();
+	}
+
+	static void SetToolbarInTitle(bool bOn)
+	{
+		GToolbarInTitle = bOn;
+		GConfig->SetBool(GConfigSection, TEXT("ToolbarInTabBar"), bOn, GEditorSettingsIni);
+		GConfig->Flush(false, GEditorSettingsIni);
+		if (bOn) { EnsureToolbarInTitle(); } else { RestoreToolbarRow(); }
+	}
+
 	static void RegisterMenus()
 	{
 		FToolMenuOwnerScoped OwnerScoped(FName(TEXT("EasyTheme")));
@@ -1847,6 +2273,12 @@ namespace EasyTheme
 			FText::FromString(TEXT("Easy Theme options")),
 			FNewToolMenuDelegate::CreateStatic(&FillMenu));
 		Note(TEXT("OK   menu Window > Easy Theme"));
+		if (!UToolMenus::Get()->IsMenuRegistered("EasyTheme.Recent"))
+		{
+			UToolMenu* Recent = UToolMenus::Get()->RegisterMenu("EasyTheme.Recent");
+			Recent->AddDynamicSection("EasyThemeRecent", FNewToolMenuDelegate::CreateStatic(&FillRecentMenu));
+		}
+
 	}
 }
 
@@ -1867,6 +2299,7 @@ public:
 		}
 		GConfig->GetBool(GConfigSection, TEXT("Dark"), GDark, GEditorSettingsIni);
 		GConfig->GetBool(GConfigSection, TEXT("LightGraphs"), GLightGraphs, GEditorSettingsIni);
+		GConfig->GetBool(GConfigSection, TEXT("ToolbarInTabBar"), GToolbarInTitle, GEditorSettingsIni);
 		GDev = IFileManager::Get().FileExists(*(ReportDir() / TEXT("dev.flag")));
 		Note(FString::Printf(TEXT("EasyTheme %s - mode %s - resources %s"), *GVersion, GDark ? TEXT("dark") : TEXT("light"), *GResDir));
 
@@ -1882,6 +2315,13 @@ public:
 			EasyTheme::ApplyGraphColors(!EasyTheme::GDark && EasyTheme::GLightGraphs);   // graph modules may load late
 			return false;
 		}), 3.0f));
+
+		// Toolbar in the title bar: retried every second (the level editor can rebuild its content).
+		Tickers.Add(FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([](float)
+		{
+			EasyTheme::EnsureToolbarInTitle();
+			return true;
+		}), 0.5f));
 
 		// Put the user's graph colours back before Unreal writes its settings on exit.
 		PreExitHandle = FCoreDelegates::OnPreExit.AddLambda([]() { EasyTheme::ApplyGraphColors(false); EasyTheme::RunPendingUpdate(); });
@@ -1987,6 +2427,10 @@ public:
 					}), 1.0f);
 				})));
 			Cmds.Add(IConsoleManager::Get().RegisterConsoleCommand(
+				TEXT("EasyTheme.Bug"),
+				TEXT("Easy Theme (dev): write the bug report files without opening the browser or Explorer"),
+				FConsoleCommandDelegate::CreateLambda([]() { EasyTheme::ReportIssue(false); EasyTheme::WriteReport(); })));
+			Cmds.Add(IConsoleManager::Get().RegisterConsoleCommand(
 				TEXT("EasyTheme.UpdateTest"),
 				TEXT("Easy Theme (dev): EasyTheme.UpdateTest <fake version> - full update into Saved/EasyTheme/Update/TestPlugin"),
 				FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
@@ -1995,10 +2439,40 @@ public:
 					EasyTheme::CheckForUpdates(true);
 				})));
 			Cmds.Add(IConsoleManager::Get().RegisterConsoleCommand(
+				TEXT("EasyTheme.RecentShot"),
+				TEXT("Easy Theme (dev): screenshot the + menu (recent_menu.png)"),
+				FConsoleCommandDelegate::CreateLambda([]()
+				{
+					TSharedRef<SWindow> W = SNew(SWindow).Title(FText::FromString(TEXT("EasyTheme Recent"))).ClientSize(FVector2D(360.0, 420.0))
+						[ UToolMenus::Get()->GenerateWidget("EasyTheme.Recent", FToolMenuContext()) ];
+					FSlateApplication::Get().AddWindow(W);
+					FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([W](float)
+					{
+						TArray<FColor> Px; FIntVector Size;
+						if (FSlateApplication::Get().TakeScreenshot(W, Px, Size) && Px.Num())
+						{
+							for (FColor& C : Px) { C.A = 255; }
+							TArray64<uint8> Png;
+							FImageUtils::PNGCompressImageArray(Size.X, Size.Y, TArrayView64<const FColor>(Px.GetData(), Px.Num()), Png);
+							FFileHelper::SaveArrayToFile(Png, *(EasyTheme::ReportDir() / TEXT("recent_menu.png")));
+							EasyTheme::Note(TEXT("OK   shot recent menu"));
+						}
+						W->RequestDestroyWindow();
+						return false;
+					}), 1.0f);
+				})));
+			Cmds.Add(IConsoleManager::Get().RegisterConsoleCommand(
 				TEXT("EasyTheme.Panes"),
 				TEXT("Easy Theme (dev): apply the 3-pane layout"),
 				FConsoleCommandDelegate::CreateLambda([]() { EasyTheme::UsePanesLayout(); })));
 		}
+		Cmds.Add(IConsoleManager::Get().RegisterConsoleCommand(
+			TEXT("EasyTheme.TabToolbar"),
+			TEXT("Easy Theme: EasyTheme.TabToolbar 1|0 - main toolbar in the tab bar, or back in its row"),
+			FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
+			{
+				EasyTheme::SetToolbarInTitle(Args.Num() ? Args[0] != TEXT("0") : !EasyTheme::GToolbarInTitle);
+			})));
 		Cmds.Add(IConsoleManager::Get().RegisterConsoleCommand(
 			TEXT("EasyTheme.Layout"),
 			TEXT("Easy Theme: rewrite the 3-pane user layout"),
@@ -2012,6 +2486,7 @@ public:
 	virtual void ShutdownModule() override
 	{
 		FCoreDelegates::OnPreExit.Remove(PreExitHandle);
+		EasyTheme::GTabBars.Reset();
 		for (const FTSTicker::FDelegateHandle& H : Tickers) { FTSTicker::GetCoreTicker().RemoveTicker(H); }
 		if (EasyTheme::GResStyle.IsValid()) { FSlateStyleRegistry::UnRegisterSlateStyle(*EasyTheme::GResStyle); EasyTheme::GResStyle.Reset(); }
 		Tickers.Reset();
