@@ -17,6 +17,7 @@
 #include "Styling/SlateStyle.h"
 #include "Styling/SlateTypes.h"
 #include "Styling/ToolBarStyle.h"
+#include "Styling/SegmentedControlStyle.h"
 #include "Styling/SlateBrush.h"
 #include "Styling/SlateColor.h"
 #include "Brushes/SlateImageBrush.h"
@@ -106,6 +107,13 @@ namespace EasyTheme
 	static bool GDark = true;   // Dark is the default; Light is chosen from Window > Easy Theme.
 	static bool GLightGraphs = true;
 	static FString GVersion = TEXT("?");
+	// Compact look (Window > Easy Theme > Compact): Unreal's own colours with the compact layout,
+	// square corners, font and fixes. Applied at start-up (switching asks for a restart).
+	static bool GCompact = false;
+	static bool GHideHome = true;   // option "Show Home Tab" off: Unreal's Home screen tab is not created
+	static const TCHAR* GHomeCVar = TEXT("HomeScreen.EnableHomeScreen");
+	static void SaveHomeSetting();
+	static void SaveLook(const FString& Look);
 	static bool GToolbarInTitle = true;   // level toolbar moved into the tab bar (option "Toolbar in Tab Bar")   // from EasyTheme.uplugin
 	static const TCHAR* GReleasesUrl = TEXT("https://github.com/mapmodelers/ue5-theme-easy/releases/latest");   // Light mode also lightens graph canvases (option in the menu).
 	static const TCHAR* GConfigSection = TEXT("EasyTheme");
@@ -136,13 +144,13 @@ namespace EasyTheme
 		{ TEXT("Title"),              TEXT("D4D0C8") },
 		{ TEXT("WindowBorder"),       TEXT("808080") },
 		{ TEXT("Foldout"),            TEXT("ECE9E2") },
-		{ TEXT("Input"),              TEXT("FFFFFF") },
+		{ TEXT("Input"),              TEXT("F2F0EB") },
 		{ TEXT("InputOutline"),       TEXT("7F7F7F") },
-		{ TEXT("Recessed"),           TEXT("FFFFFF") },
+		{ TEXT("Recessed"),           TEXT("F2F0EB") },
 		{ TEXT("Background"),         TEXT("BDB9B0") },
 		{ TEXT("Panel"),              TEXT("D4D0C8") },
 		{ TEXT("Header"),             TEXT("DEDBD3") },
-		{ TEXT("Dropdown"),           TEXT("FFFFFF") },
+		{ TEXT("Dropdown"),           TEXT("F2F0EB") },
 		{ TEXT("DropdownOutline"),    TEXT("7F7F7F") },
 		{ TEXT("Hover"),              TEXT("E6EEF9") },
 		{ TEXT("Hover2"),             TEXT("A0A0A0") },
@@ -226,7 +234,7 @@ namespace EasyTheme
 	static const FFlat GLightFlat = { TEXT("C8C4BC"), TEXT("A0A0A0"), TEXT("E6EEF9"),
 		TEXT("D4D0C8"), TEXT("808080"), TEXT("C1D2EE"), TEXT("0A246A"),
 		TEXT("FFFFE1"), TEXT("000000"), TEXT("ECE9E2"),
-		TEXT("FFFFFF"), TEXT("F4F3EF"), TEXT("E6EEF9"),
+		TEXT("F2F0EB"), TEXT("EAE8E2"), TEXT("E6EEF9"),   // rows: no pure white backgrounds
 		TEXT("D4D0C8"), TEXT("000000"), TEXT("303030"),   // disabled text: Slate lightens it about half again
 		TEXT("D8D5CE"), TEXT("C4C0B8"), TEXT("ADA9A1"), TEXT("8C8880") };
 
@@ -285,6 +293,7 @@ namespace EasyTheme
 
 	static void ApplyColors(bool bVerbose)
 	{
+		if (GCompact) { return; }   // Unreal's own colours
 		int32 Dim = 0; UEnum* E = nullptr;
 		FLinearColor* Arr = ColorArray(Dim, E);
 		if (!Arr) { return; }
@@ -555,10 +564,12 @@ namespace EasyTheme
 	{
 		if (!GWhiteText.Contains(&T))
 		{
-			if (!(T.ColorAndOpacity == FSlateColor(EStyleColor::White))) { return; }
+			// White, and 25% white (menu section headings: LOOK, LAYOUT... were white on light grey)
+			if (!(T.ColorAndOpacity == FSlateColor(EStyleColor::White)) && !(T.ColorAndOpacity == FSlateColor(EStyleColor::White25))) { return; }
 			GWhiteText.Add(&T, T.ColorAndOpacity);
 		}
-		T.ColorAndOpacity = GDark ? GWhiteText[&T] : Ink;
+		const FSlateColor& Orig = GWhiteText[&T];
+		T.ColorAndOpacity = GDark ? Orig : (Orig == FSlateColor(EStyleColor::White25) ? FSlateColor(Hex(TEXT("6E6A62"))) : Ink);
 	}
 
 	// Every text style drawn in the theme's White (plugin names in the Plugins window, Niagara
@@ -800,8 +811,155 @@ namespace EasyTheme
 		GConfig->Flush(false, GEditorSettingsIni);
 	}
 
+	// ---------------------------------------------------------------- square corners
+	// Every rounded brush in every style set (plugins included), standalone or inside a widget
+	// style (found by reflection), gets square corners. Round things that must stay round keep
+	// theirs: radio dots, colour wheels, toggle switches, knobs, and tiny dots.
+	static int32 SquareBrush(FSlateBrush& B)
+	{
+		if (B.DrawAs != ESlateBrushDrawType::RoundedBox) { return 0; }
+		const float Size = FMath::Max(B.ImageSize.X, B.ImageSize.Y);
+		if (Size > 0.f && Size <= 10.f) { return 0; }
+		const FVector4 R = B.OutlineSettings.CornerRadii;
+		if (B.OutlineSettings.RoundingType == ESlateBrushRoundingType::FixedRadius && FMath::IsNearlyZero(R.X) && FMath::IsNearlyZero(R.Y)
+			&& FMath::IsNearlyZero(R.Z) && FMath::IsNearlyZero(R.W)) { return 0; }
+		B.OutlineSettings.CornerRadii = FVector4(0.0, 0.0, 0.0, 0.0);
+		B.OutlineSettings.RoundingType = ESlateBrushRoundingType::FixedRadius;
+		return 1;
+	}
+
+	static int32 SquareStruct(const UStruct* Type, void* Data, int32 Depth)
+	{
+		int32 N = 0;
+		for (TFieldIterator<FStructProperty> It(Type); It; ++It)
+		{
+			for (int32 i = 0; i < It->ArrayDim; ++i)
+			{
+				void* V = It->ContainerPtrToValuePtr<void>(Data, i);
+				if (It->Struct == FSlateBrush::StaticStruct()) { N += SquareBrush(*static_cast<FSlateBrush*>(V)); }
+				else if (Depth < 4) { N += SquareStruct(It->Struct, V, Depth + 1); }
+			}
+		}
+		return N;
+	}
+
+	template<typename T>
+	static int32 SquareStyle(const ISlateStyle* S, const FName& Key)
+	{
+		if (!S->HasWidgetStyle<T>(Key)) { return 0; }
+		return SquareStruct(T::StaticStruct(), const_cast<T*>(&S->GetWidgetStyle<T>(Key)), 0);
+	}
+
+	static void SquareAll(const TArray<const ISlateStyle*>& Sets)
+	{
+		static const TCHAR* Round[] = { TEXT("Radio"), TEXT("Toggle"), TEXT("Switch"), TEXT("Wheel"), TEXT("Circle"), TEXT("Dot"),
+			TEXT("Knob"), TEXT("ColorPicker"), TEXT("Avatar") };
+		int32 N = 0;
+		for (const ISlateStyle* S : Sets)
+		{
+			for (const FName& Key : S->GetStyleKeys())
+			{
+				const FString K = Key.ToString();
+				bool bRound = false;
+				for (const TCHAR* W : Round) { if (K.Contains(W)) { bRound = true; break; } }
+				if (bRound) { continue; }
+				if (const FSlateBrush* B = S->GetOptionalBrush(Key, nullptr, nullptr)) { N += SquareBrush(*const_cast<FSlateBrush*>(B)); }
+				N += SquareStyle<FButtonStyle>(S, Key) + SquareStyle<FCheckBoxStyle>(S, Key) + SquareStyle<FComboButtonStyle>(S, Key)
+					+ SquareStyle<FComboBoxStyle>(S, Key) + SquareStyle<FEditableTextBoxStyle>(S, Key) + SquareStyle<FSearchBoxStyle>(S, Key)
+					+ SquareStyle<FSpinBoxStyle>(S, Key) + SquareStyle<FTableRowStyle>(S, Key) + SquareStyle<FDockTabStyle>(S, Key)
+					+ SquareStyle<FToolBarStyle>(S, Key) + SquareStyle<FProgressBarStyle>(S, Key) + SquareStyle<FSliderStyle>(S, Key)
+					+ SquareStyle<FSegmentedControlStyle>(S, Key) + SquareStyle<FExpandableAreaStyle>(S, Key) + SquareStyle<FHeaderRowStyle>(S, Key)
+					+ SquareStyle<FScrollBarStyle>(S, Key) + SquareStyle<FInlineEditableTextBlockStyle>(S, Key) + SquareStyle<FTableColumnHeaderStyle>(S, Key);
+			}
+		}
+		Note(FString::Printf(TEXT("OK   square corners: %d brushes"), N));
+	}
+
+	// Menu radio buttons (the Look choice): only the active one shows a dot. Unreal's unchecked
+	// state drew a dot too, so Dark and Light looked both selected. Thanks u/LeFlambeurHimself.
+	static void ClearMenuRadio(const TArray<const ISlateStyle*>& Sets)
+	{
+		PatchStyle<FCheckBoxStyle>(Sets, TEXT("Menu.RadioButton"), [](FCheckBoxStyle& C)
+		{
+			const FSlateBrush Off = FSlateNoResource();
+			const FSlateBrush On = FSlateRoundedBoxBrush(FStyleColors::Foreground, FVector2f(8.f, 8.f));
+			C.UncheckedImage = Off; C.UncheckedHoveredImage = Off; C.UncheckedPressedImage = Off;
+			C.UndeterminedImage = Off; C.UndeterminedHoveredImage = Off; C.UndeterminedPressedImage = Off;
+			C.CheckedImage = On; C.CheckedHoveredImage = On; C.CheckedPressedImage = On;
+		});
+	}
+
+	// Compact look: only the density changes of ApplyStyles (paddings, toolbar height, menus,
+	// title row), no brush or colour.
+	static void ApplyCompactStyles(const TArray<const ISlateStyle*>& Sets)
+	{
+		auto Pad = [](FButtonStyle& B)
+		{
+			if (!OnceD(&B.NormalPadding)) { return; }
+			B.NormalPadding = Shrink(B.NormalPadding, GPadX, GPadY);
+			const FMargin& N = B.NormalPadding;
+			B.PressedPadding = FMargin(N.Left + 1.f, N.Top + 1.f, FMath::Max(N.Right - 1.f, 0.f), FMath::Max(N.Bottom - 1.f, 0.f));
+		};
+		PatchStyle<FButtonStyle>(Sets, TEXT("Button"), Pad);
+		PatchStyle<FButtonStyle>(Sets, TEXT("PrimaryButton"), Pad);
+		PatchStyle<FButtonStyle>(Sets, TEXT("SimpleButton"), Pad);
+		PatchStyle<FComboButtonStyle>(Sets, TEXT("ComboButton"), [&](FComboButtonStyle& C) { Pad(C.ButtonStyle); });
+		PatchStyle<FComboBoxStyle>(Sets, TEXT("ComboBox"), [&](FComboBoxStyle& C) { Pad(C.ComboButtonStyle.ButtonStyle); });
+		PatchStyle<FCheckBoxStyle>(Sets, TEXT("Checkbox"), [](FCheckBoxStyle& C) { if (OnceD(&C.Padding)) { C.Padding = Shrink(C.Padding, 0.8f, GPadY); } });
+		auto TextPad = [](FEditableTextBoxStyle& T) { if (OnceD(&T.Padding)) { T.Padding = Shrink(T.Padding, 0.8f, GPadY); } };
+		PatchStyle<FEditableTextBoxStyle>(Sets, TEXT("NormalEditableTextBox"), TextPad);
+		PatchStyle<FSearchBoxStyle>(Sets, TEXT("SearchBox"), [&](FSearchBoxStyle& S) { TextPad(S.TextBoxStyle); });
+		auto SpinPad = [](FSpinBoxStyle& S) { if (OnceD(&S.TextPadding)) { S.TextPadding = Shrink(S.TextPadding, 0.8f, GPadY); } };
+		PatchStyle<FSpinBoxStyle>(Sets, TEXT("SpinBox"), SpinPad);
+		PatchStyle<FSpinBoxStyle>(Sets, TEXT("NumericEntrySpinBox"), SpinPad);
+		auto TabPad = [](FDockTabStyle& D) { if (OnceD(&D.TabPadding)) { D.TabPadding = Shrink(D.TabPadding, 0.8f, 0.4f); } };
+		PatchStyle<FDockTabStyle>(Sets, TEXT("Docking.Tab"), TabPad);
+		PatchStyle<FDockTabStyle>(Sets, TEXT("Docking.MajorTab"), TabPad);
+		auto BarPad = [](FToolBarStyle& T)
+		{
+			if (OnceD(&T.ButtonPadding))
+			{
+				T.ButtonPadding = Shrink(T.ButtonPadding, GPadX, GPadY);
+				T.CheckBoxPadding = Shrink(T.CheckBoxPadding, GPadX, GPadY);
+				T.ComboButtonPadding = Shrink(T.ComboButtonPadding, GPadX, GPadY);
+				T.BlockPadding = Shrink(T.BlockPadding, GPadX, GPadY);
+				T.BackgroundPadding = Shrink(T.BackgroundPadding, GPadX, GPadY);
+				T.SetIconSize(FVector2D(16.0, 16.0));
+			}
+			auto Vert = [](FMargin M, float V) { M.Top = V; M.Bottom = V; return M; };
+			T.BackgroundPadding = Vert(T.BackgroundPadding, 0.f);
+			T.BlockPadding = Vert(T.BlockPadding, 0.f);
+			T.ButtonPadding = Vert(T.ButtonPadding, 2.f);
+			T.ComboButtonPadding = Vert(T.ComboButtonPadding, 2.f);
+			T.CheckBoxPadding = Vert(T.CheckBoxPadding, 2.f);
+		};
+		for (const TCHAR* K : { TEXT("ToolBar"), TEXT("SlimToolBar"), TEXT("AssetEditorToolbar"), TEXT("Toolbar.BackplateLeft"), TEXT("Toolbar.BackplateLeftPlay"),
+			TEXT("Toolbar.BackplateCenter"), TEXT("Toolbar.BackplateCenterStop"), TEXT("Toolbar.BackplateRight"), TEXT("Toolbar.BackplateRightCombo") })
+		{
+			PatchStyle<FToolBarStyle>(Sets, K, BarPad);
+		}
+		PatchStyle<FCheckBoxStyle>(Sets, TEXT("TextureEditor.ChannelButtonStyle"), [](FCheckBoxStyle& C) { C.Padding = FMargin(8.f, 1.f); });
+		PatchMargin(Sets, TEXT("Menu.Block.Padding"), 0.8f, GPadY);
+		PatchMargin(Sets, TEXT("Menu.Block.IndentedPadding"), 0.8f, GPadY);
+		PatchBrush(Sets, TEXT("AppIcon"), FSlateNoResource());
+		SetMarginAbs(Sets, TEXT("AppIconPadding"), FMargin(4.f, 0.f, 0.f, 0.f));
+		PatchBrush(Sets, TEXT("AppIcon.Small"), FSlateNoResource());
+		SetMarginAbs(Sets, TEXT("AppIconPadding.Small"), FMargin(2.f, 0.f, 0.f, 0.f));
+		SetMarginAbs(Sets, TEXT("SProjectBadge.BadgePadding"), FMargin(12.f, 2.f, 12.f, 3.f));
+		SetMarginAbs(Sets, TEXT("WindowMenuBar.MenuBar.Padding"), FMargin(8.f, 2.f));
+	}
+
 	static void ApplyStyles()
 	{
+		if (GCompact)
+		{
+			const TArray<const ISlateStyle*> CSets = StyleSets();
+			ApplyCompactStyles(CSets);
+			ClearMenuRadio(CSets);
+			SquareAll(AllStyleSets());
+			GStyleSetCount = CountStyleSets();
+			return;
+		}
 		const TArray<const ISlateStyle*> Sets = StyleSets();
 		Note(FString::Printf(TEXT("styles (%s): %d style sets"), GDark ? TEXT("dark") : TEXT("light"), Sets.Num()));
 
@@ -1070,6 +1228,8 @@ namespace EasyTheme
 		FixLightText(AllStyleSets(), Ink, FSlateColor(Hex(TEXT("505050"))));
 		FixDarkFills(AllStyleSets());
 		InkThemeWhiteText(AllStyleSets(), Ink);
+		ClearMenuRadio(Sets);
+		SquareAll(AllStyleSets());   // thanks u/LostInTheRapGame
 		GStyleSetCount = CountStyleSets();
 
 		// ---- every text-entry style: typed, focused and read-only text all in the text colour
@@ -1248,7 +1408,7 @@ namespace EasyTheme
 		const FString Dir = ReportDir();
 		IFileManager::Get().MakeDirectory(*Dir, true);
 		TArray<FString> Out;
-		Out.Add(FString::Printf(TEXT("EasyTheme report - mode %s - misses: %d"), GDark ? TEXT("dark") : TEXT("light"), GMiss));
+		Out.Add(FString::Printf(TEXT("EasyTheme report - mode %s - misses: %d"), GCompact ? TEXT("compact") : GDark ? TEXT("dark") : TEXT("light"), GMiss));
 		Out.Append(GReport);
 		FFileHelper::SaveStringToFile(FString::Join(Out, TEXT("\n")), *(Dir / TEXT("report.txt")));
 	}
@@ -1553,6 +1713,8 @@ namespace EasyTheme
 	static void FixNewStyleSets()
 	{
 		GStyleSetCount = CountStyleSets();
+		SquareAll(AllStyleSets());
+		if (GCompact) { return; }
 		const FFlat& F = GDark ? GDarkFlat : GLightFlat;
 		FixLightText(AllStyleSets(), FSlateColor(Hex(F.Ink)), FSlateColor(Hex(TEXT("505050"))));
 		FixDarkFills(AllStyleSets());
@@ -1561,9 +1723,12 @@ namespace EasyTheme
 
 	static void ApplyAll()
 	{
-		ApplyColors(true);
-		ScanRemaps();
-		ApplyRemaps();
+		if (!GCompact)
+		{
+			ApplyColors(true);
+			ScanRemaps();
+			ApplyRemaps();
+		}
 		ApplyStyles();
 		ApplyFont();
 	}
@@ -1607,7 +1772,12 @@ namespace EasyTheme
 		if (!GDev)
 		{
 			GConfig->SetBool(GConfigSection, TEXT("Dark"), GDark, GEditorSettingsIni);
+			GConfig->SetString(GConfigSection, TEXT("Look"), GDark ? TEXT("Dark") : TEXT("Light"), GEditorSettingsIni);
 			GConfig->Flush(false, GEditorSettingsIni);
+		}
+		else
+		{
+			SaveLook(GDark ? TEXT("Dark") : TEXT("Light"));
 		}
 		ApplyColors(true);
 		ApplyRemaps();
@@ -1672,6 +1842,14 @@ namespace EasyTheme
 		ForgetGraphColors();
 		GConfig->RemoveKey(GConfigSection, TEXT("Dark"), GEditorSettingsIni);
 		GConfig->RemoveKey(GConfigSection, TEXT("ToolbarInTabBar"), GEditorSettingsIni);
+		GConfig->RemoveKey(GConfigSection, TEXT("HideHomeTab"), GEditorSettingsIni);
+		GConfig->RemoveKey(GConfigSection, TEXT("Look"), GEditorSettingsIni);
+		{
+			const bool bKeep = GHideHome;
+			GHideHome = false;
+			SaveHomeSetting();   // Unreal's Home tab back
+			GHideHome = bKeep;
+		}
 		GConfig->Flush(false, GEditorSettingsIni);
 		IFileManager::Get().Delete(*PanesLayoutFile(), false, true, true);
 		FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(
@@ -1951,7 +2129,7 @@ namespace EasyTheme
 		const FString Info = FString::Printf(
 			TEXT("Easy Theme %s\nUnreal Engine %s\nOS %s\nMode %s, Light Graphs %s, Toolbar in Tab Bar %s\nWindow %.0fx%.0f, DPI scale %.2f\n"),
 			*GVersion, *FEngineVersion::Current().ToString(EVersionComponent::Patch), *FPlatformMisc::GetOSVersion(),
-			GDark ? TEXT("Dark") : TEXT("Light"), GLightGraphs ? TEXT("on") : TEXT("off"), GToolbarInTitle ? TEXT("on") : TEXT("off"),
+			GCompact ? TEXT("Compact") : GDark ? TEXT("Dark") : TEXT("Light"), GLightGraphs ? TEXT("on") : TEXT("off"), GToolbarInTitle ? TEXT("on") : TEXT("off"),
 			Px.X, Px.Y, FSlateApplication::Get().GetApplicationScale());
 		FFileHelper::SaveStringToFile(Info, *(Dir / TEXT("info.txt")));
 		Note(FString::Printf(TEXT("OK   bug report in %s"), *Dir));
@@ -1967,6 +2145,59 @@ namespace EasyTheme
 
 	static void SetToolbarInTitle(bool bOn);
 
+	// Unreal 5.8 creates its Home screen tab only while HomeScreen.EnableHomeScreen is on, and reads
+	// it once at start-up. Unreal rewrites a project's saved .ini files without that section, so the
+	// line goes to the per-user UserEngine.ini (read at start-up, never rewritten by Unreal; applies
+	// to every project). Showing the tab again removes the line. Thanks u/LeFlambeurHimself.
+	static FString HomeIniPath()
+	{
+		return FPaths::Combine(FPlatformProcess::UserSettingsDir(), TEXT("Unreal Engine/Engine/Config/UserEngine.ini"));
+	}
+
+	static void SaveHomeSetting()
+	{
+		const FString Path = HomeIniPath();
+		FConfigFile Ini;
+		if (IFileManager::Get().FileExists(*Path)) { Ini.Read(Path); }
+		FString Cur;
+		const bool bHas = Ini.GetString(TEXT("ConsoleVariables"), GHomeCVar, Cur);
+		bool bWrite = false;
+		if (GHideHome && !(bHas && Cur == TEXT("0"))) { Ini.SetString(TEXT("ConsoleVariables"), GHomeCVar, TEXT("0")); bWrite = true; }
+		else if (!GHideHome && bHas) { Ini.RemoveKeyFromSection(TEXT("ConsoleVariables"), GHomeCVar); bWrite = true; }
+		if (!bWrite) { return; }
+		IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
+		const bool bOk = Ini.Write(Path);
+		Note(FString::Printf(TEXT("%s Home tab %s from the next start"), bOk ? TEXT("OK  ") : TEXT("MISS"), GHideHome ? TEXT("hidden") : TEXT("shown")));
+	}
+
+	// The look is saved for the user; the test project (dev) keeps its own, per project, so tests
+	// never change the shared setting.
+	static bool GNoDialog = false;
+	static void SaveLook(const FString& Look)
+	{
+		const FString& Ini = GDev ? GEditorPerProjectIni : GEditorSettingsIni;
+		GConfig->SetString(GConfigSection, TEXT("Look"), *Look, Ini);
+		if (Look != TEXT("Compact")) { GConfig->SetBool(GConfigSection, TEXT("Dark"), Look == TEXT("Dark"), Ini); }
+		GConfig->Flush(false, Ini);
+	}
+
+	// Dark and Light switch live. Compact (Unreal's own colours) differs in brushes too, so going
+	// to or from it is saved and applied at the next start.
+	static void SetLook(const FString& Look)
+	{
+		const bool bToCompact = Look == TEXT("Compact");
+		if (bToCompact == GCompact)
+		{
+			if (!bToCompact && (Look == TEXT("Dark")) != GDark) { SetMode(Look == TEXT("Dark"), true); }
+			return;
+		}
+		SaveLook(Look);
+		if (GDev && GNoDialog) { return; }
+		const EAppReturnType::Type R = FMessageDialog::Open(EAppMsgType::YesNo, FText::FromString(FString::Printf(
+			TEXT("Easy Theme: the %s look is applied when Unreal starts.\n\nRestart Unreal now?"), *Look)));
+		if (R == EAppReturnType::Yes) { FUnrealEdMisc::Get().RestartEditor(true); }
+	}
+
 	static void FillMenu(UToolMenu* Sub)
 	{
 		FToolMenuSection& Look = Sub->AddSection("EasyThemeLook", FText::FromString(TEXT("Look")));
@@ -1974,15 +2205,22 @@ namespace EasyTheme
 			FText::FromString(TEXT("Dark")),
 			FText::FromString(TEXT("Dark look (default).")),
 			FSlateIcon(),
-			FUIAction(FExecuteAction::CreateLambda([]() { if (!GDark) { SetMode(true, true); } }), FCanExecuteAction(),
-				FIsActionChecked::CreateLambda([]() { return GDark; })),
+			FUIAction(FExecuteAction::CreateLambda([]() { SetLook(TEXT("Dark")); }), FCanExecuteAction(),
+				FIsActionChecked::CreateLambda([]() { return GDark && !GCompact; })),
 			EUserInterfaceActionType::RadioButton);
 		Look.AddMenuEntry("EasyThemeLight",
 			FText::FromString(TEXT("Light")),
 			FText::FromString(TEXT("Light grey look.")),
 			FSlateIcon(),
-			FUIAction(FExecuteAction::CreateLambda([]() { if (GDark) { SetMode(false, true); } }), FCanExecuteAction(),
-				FIsActionChecked::CreateLambda([]() { return !GDark; })),
+			FUIAction(FExecuteAction::CreateLambda([]() { SetLook(TEXT("Light")); }), FCanExecuteAction(),
+				FIsActionChecked::CreateLambda([]() { return !GDark && !GCompact; })),
+			EUserInterfaceActionType::RadioButton);
+		Look.AddMenuEntry("EasyThemeCompact",
+			FText::FromString(TEXT("Compact")),
+			FText::FromString(TEXT("Unreal's own colours with the compact layout, square corners and fixes. Applied when Unreal starts.")),
+			FSlateIcon(),
+			FUIAction(FExecuteAction::CreateLambda([]() { SetLook(TEXT("Compact")); }), FCanExecuteAction(),
+				FIsActionChecked::CreateLambda([]() { return GCompact; })),
 			EUserInterfaceActionType::RadioButton);
 		Look.AddMenuEntry("EasyThemeLightGraphs",
 			FText::FromString(TEXT("Light Graphs")),
@@ -1996,7 +2234,7 @@ namespace EasyTheme
 					ApplyStyles();
 					WriteReport();
 				}),
-				FCanExecuteAction::CreateLambda([]() { return !GDark; }),
+				FCanExecuteAction::CreateLambda([]() { return !GDark && !GCompact; }),
 				FIsActionChecked::CreateLambda([]() { return GLightGraphs; })),
 			EUserInterfaceActionType::ToggleButton);
 		Look.AddMenuEntry("EasyThemeRefresh",
@@ -2018,6 +2256,24 @@ namespace EasyTheme
 			FUIAction(FExecuteAction::CreateLambda([]() { SetToolbarInTitle(!GToolbarInTitle); }),
 				FCanExecuteAction(),
 				FIsActionChecked::CreateLambda([]() { return GToolbarInTitle; })),
+			EUserInterfaceActionType::ToggleButton);
+		Layout.AddMenuEntry("EasyThemeHomeTab",
+			FText::FromString(TEXT("Show Home Tab")),
+			FText::FromString(TEXT("Unreal's Home screen tab, left of the level tab. Hidden by Easy Theme; applies when Unreal starts.")),
+			FSlateIcon(),
+			FUIAction(FExecuteAction::CreateLambda([]()
+				{
+					GHideHome = !GHideHome;
+					GConfig->SetBool(GConfigSection, TEXT("HideHomeTab"), GHideHome, GEditorSettingsIni);
+					GConfig->Flush(false, GEditorSettingsIni);
+					SaveHomeSetting();
+					if (FMessageDialog::Open(EAppMsgType::YesNo, FText::FromString(TEXT("Easy Theme: the Home tab changes when Unreal starts.\n\nRestart Unreal now?"))) == EAppReturnType::Yes)
+					{
+						FUnrealEdMisc::Get().RestartEditor(true);
+					}
+				}),
+				FCanExecuteAction(),
+				FIsActionChecked::CreateLambda([]() { return !GHideHome; })),
 			EUserInterfaceActionType::ToggleButton);
 
 		FToolMenuSection& Help = Sub->AddSection("EasyThemeHelp", FText::FromString(TEXT("Help")));
@@ -2676,7 +2932,7 @@ namespace EasyTheme
 			Out.Add(FString::Printf(TEXT("current: %s"), I.Asset.IsEmpty() ? *I.Tab.ToString() : *I.Asset));
 		}
 		Out.Append(GSweep.Findings);
-		FFileHelper::SaveStringToFile(FString::Join(Out, TEXT("\n")), *(ReportDir() / (GDark ? TEXT("sweep_d.txt") : TEXT("sweep_l.txt"))));
+		FFileHelper::SaveStringToFile(FString::Join(Out, TEXT("\n")), *(ReportDir() / (GCompact ? TEXT("sweep_c.txt") : GDark ? TEXT("sweep_d.txt") : TEXT("sweep_l.txt"))));
 		FFileHelper::SaveStringToFile(FString::Join(GSweepInfo, TEXT("\n")), *(ReportDir() / TEXT("sweep_info.txt")));
 	}
 
@@ -2690,7 +2946,7 @@ namespace EasyTheme
 	{
 		FString N = I.Asset.IsEmpty() ? I.Tab.ToString() : FPaths::GetBaseFilename(I.Asset);
 		N = N.Replace(TEXT(" "), TEXT("_")).Replace(TEXT("/"), TEXT("_")).Replace(TEXT(":"), TEXT("_"));
-		return FString::Printf(TEXT("%s_%03d_%s%s"), GDark ? TEXT("d") : TEXT("l"), GSweep.Index, *N, I.bFloat ? TEXT("_float") : TEXT(""));
+		return FString::Printf(TEXT("%s_%03d_%s%s"), GCompact ? TEXT("c") : GDark ? TEXT("d") : TEXT("l"), GSweep.Index, *N, I.bFloat ? TEXT("_float") : TEXT(""));
 	}
 
 	// Phase 0: open the item. Phase 1: shoot and check every window, close it, next item.
@@ -2839,7 +3095,7 @@ namespace EasyTheme
 			{ TEXT("/Script/Engine"), TEXT("CurveFloat") }, { TEXT("/Script/Engine"), TEXT("SoundWave") },
 			{ TEXT("/Script/Engine"), TEXT("PhysicsAsset") }, { TEXT("/Script/Engine"), TEXT("AnimSequence") },
 			{ TEXT("/Script/Engine"), TEXT("Font") }, { TEXT("/Script/Niagara"), TEXT("NiagaraSystem") },
-			{ TEXT("/Script/LevelSequence"), TEXT("LevelSequence") }, { TEXT("/Script/UMGEditor"), TEXT("WidgetBlueprint") } };
+			{ TEXT("/Script/LevelSequence"), TEXT("LevelSequence") }, { TEXT("/Script/Engine"), TEXT("AnimBlueprint") }, { TEXT("/Script/UMGEditor"), TEXT("WidgetBlueprint") } };
 		for (const auto& C : Classes)
 		{
 			TArray<FAssetData> Found;
@@ -2904,11 +3160,29 @@ public:
 			GPluginDir = FPaths::ConvertRelativePathToFull(Plugin->GetBaseDir());
 		}
 		GConfig->GetBool(GConfigSection, TEXT("Dark"), GDark, GEditorSettingsIni);
+		{
+			FString Look;
+			GConfig->GetString(GConfigSection, TEXT("Look"), Look, GEditorSettingsIni);
+			GCompact = Look == TEXT("Compact");
+		}
 		GConfig->GetBool(GConfigSection, TEXT("LightGraphs"), GLightGraphs, GEditorSettingsIni);
 		GConfig->GetBool(GConfigSection, TEXT("ToolbarInTabBar"), GToolbarInTitle, GEditorSettingsIni);
+		GConfig->GetBool(GConfigSection, TEXT("HideHomeTab"), GHideHome, GEditorSettingsIni);
+		EasyTheme::SaveHomeSetting();
 		GDev = IFileManager::Get().FileExists(*(ReportDir() / TEXT("dev.flag")));
 		// Dev: light.flag starts the test editor in Light without touching the shared setting.
-		if (GDev && IFileManager::Get().FileExists(*(ReportDir() / TEXT("light.flag")))) { GDark = false; }
+		if (GDev)
+		{
+			FString Look;
+			if (GConfig->GetString(GConfigSection, TEXT("Look"), Look, GEditorPerProjectIni))
+			{
+				GCompact = Look == TEXT("Compact");
+				GDark = Look != TEXT("Light");
+			}
+		}
+		if (GDev && IFileManager::Get().FileExists(*(ReportDir() / TEXT("light.flag")))) { GDark = false; GCompact = false; }
+		if (GDev && IFileManager::Get().FileExists(*(ReportDir() / TEXT("compact.flag")))) { GCompact = true; }
+		if (GCompact) { GDark = true; }   // the Dark code paths (resources, restores) fit Unreal's colours best
 		Note(FString::Printf(TEXT("EasyTheme %s - mode %s - resources %s"), *GVersion, GDark ? TEXT("dark") : TEXT("light"), *GResDir));
 
 		RegisterResources();
@@ -3047,6 +3321,18 @@ public:
 				TEXT("Easy Theme (dev): 0|1 - clear title bars of new floating panels"),
 				FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args) { EasyTheme::GFloatTitleFix = !(Args.Num() && Args[0] == TEXT("0")); })));
 			Cmds.Add(IConsoleManager::Get().RegisterConsoleCommand(
+				TEXT("EasyTheme.Look"),
+				TEXT("Easy Theme (dev): EasyTheme.Look Dark|Light|Compact - as the menu, without the restart dialog"),
+				FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
+				{
+					if (!Args.Num()) { return; }
+					EasyTheme::GNoDialog = true;
+					EasyTheme::SetLook(Args[0]);
+					EasyTheme::GNoDialog = false;
+					EasyTheme::Note(FString::Printf(TEXT("OK   look %s saved"), *Args[0]));
+					EasyTheme::WriteReport();
+				})));
+			Cmds.Add(IConsoleManager::Get().RegisterConsoleCommand(
 				TEXT("EasyTheme.Sweep"),
 				TEXT("Easy Theme (dev): EasyTheme.Sweep [from] [-skip=TabA,TabB] - every Window-menu panel docked, some floating, one asset per type; checks + shots"),
 				FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args) { EasyTheme::StartSweep(Args); })));
@@ -3065,13 +3351,19 @@ public:
 				})));
 			Cmds.Add(IConsoleManager::Get().RegisterConsoleCommand(
 				TEXT("EasyTheme.RecentShot"),
-				TEXT("Easy Theme (dev): screenshot the + menu (recent_menu.png)"),
-				FConsoleCommandDelegate::CreateLambda([]()
+				TEXT("Easy Theme (dev): screenshot the + menu (recent_menu.png), or with 'theme' the Easy Theme menu (theme_menu.png)"),
+				FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
 				{
-					TSharedRef<SWindow> W = SNew(SWindow).Title(FText::FromString(TEXT("EasyTheme Recent"))).ClientSize(FVector2D(360.0, 420.0))
-						[ UToolMenus::Get()->GenerateWidget("EasyTheme.Recent", FToolMenuContext()) ];
+					const bool bTheme = Args.Num() && Args[0] == TEXT("theme");
+					if (bTheme && !UToolMenus::Get()->IsMenuRegistered("EasyTheme.MenuShot"))
+					{
+						EasyTheme::FillMenu(UToolMenus::Get()->RegisterMenu("EasyTheme.MenuShot"));
+					}
+					const FString File = bTheme ? TEXT("theme_menu.png") : TEXT("recent_menu.png");
+					TSharedRef<SWindow> W = SNew(SWindow).Title(FText::FromString(TEXT("EasyTheme Menu"))).ClientSize(FVector2D(360.0, 420.0))
+						[ UToolMenus::Get()->GenerateWidget(bTheme ? FName("EasyTheme.MenuShot") : FName("EasyTheme.Recent"), FToolMenuContext()) ];
 					FSlateApplication::Get().AddWindow(W);
-					FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([W](float)
+					FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([W, File](float)
 					{
 						TArray<FColor> Px; FIntVector Size;
 						if (FSlateApplication::Get().TakeScreenshot(W, Px, Size) && Px.Num())
@@ -3079,7 +3371,13 @@ public:
 							for (FColor& C : Px) { C.A = 255; }
 							TArray64<uint8> Png;
 							FImageUtils::PNGCompressImageArray(Size.X, Size.Y, TArrayView64<const FColor>(Px.GetData(), Px.Num()), Png);
-							FFileHelper::SaveArrayToFile(Png, *(EasyTheme::ReportDir() / TEXT("recent_menu.png")));
+							FFileHelper::SaveArrayToFile(Png, *(EasyTheme::ReportDir() / File));
+							// Menus are popups the sweep never sees: same checks here.
+							EasyTheme::GSweep.Findings.Reset();
+							EasyTheme::GSweep.Seen.Reset();
+							EasyTheme::CheckWindow(W, File);
+							EasyTheme::Note(FString::Printf(TEXT("OK   menu check: %d findings"), EasyTheme::GSweep.Findings.Num()));
+							for (const FString& L : EasyTheme::GSweep.Findings) { EasyTheme::Note(TEXT("     ") + L); }
 							EasyTheme::Note(TEXT("OK   shot recent menu"));
 						}
 						W->RequestDestroyWindow();

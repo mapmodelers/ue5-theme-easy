@@ -37,6 +37,7 @@ mkdir "%ROOT%\TestProject\Saved\EasyTheme" 2>nul
 type nul > "%ROOT%\TestProject\Saved\EasyTheme\dev.flag"
 rem _run\light.flag: test editor starts in Light (dev only, the shared setting is not touched)
 if exist "%RUN%\light.flag" type nul > "%ROOT%\TestProject\Saved\EasyTheme\light.flag"
+if exist "%RUN%\compact.flag" type nul > "%ROOT%\TestProject\Saved\EasyTheme\compact.flag"
 rem Start-Process: the editor must not inherit this window's output (it would hold the watcher).
 powershell -NoProfile -Command "Start-Process -FilePath '%ENGINE%\Engine\Binaries\Win64\UnrealEditor.exe' -ArgumentList '\"%ROOT%\TestProject\EasyThemeTest.uproject\"'"
 >> "%RUN%\status.txt" echo BUILD_OK INSTALL_OK LAUNCHED %date% %time%

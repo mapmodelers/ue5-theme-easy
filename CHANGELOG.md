@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.4
+Thanks to the Reddit testers u/LeFlambeurHimself and u/LostInTheRapGame for their feedback.
+- New look **Compact** (Window > Easy Theme > Look): Unreal's own colours with the compact layout, square corners, Tahoma and all fixes. Switching to or from it applies at the next start. Asked by u/LeFlambeurHimself.
+- Home tab hidden by default (Unreal's HomeScreen.EnableHomeScreen, written to your user UserEngine.ini, applies to every project from the next start); Window > Easy Theme > Layout > Show Home Tab brings it back. Thanks u/LeFlambeurHimself.
+- Look menu: only the active look shows a dot (both Dark and Light showed one). Thanks u/LeFlambeurHimself.
+- Square corners everywhere: every rounded brush in every style set, plugins included, standalone or inside widget styles; radio dots, colour wheels and toggles stay round. Thanks u/LostInTheRapGame.
+- Light: menu section headings (LOOK, LAYOUT...) were white on light grey; now dark grey. Menus are now part of the automatic checks.
+- Light: no pure white backgrounds any more (text fields, lists, drop-downs: #F2F0EB, alternate rows #EAE8E2).
+- Checked: Animation Blueprint node titles keep white text on a title darkened to at most #808080 (3.9:1 or better; reported unreadable on 0.2.1, fixed since 0.2.2). Plugins window tooltips use the light tooltip (since 0.2.1).
+
 ## 0.2.3
 - Floating panels: their tabs were hidden under the window's title bar (Unreal draws the title bar over the tab row there; it now stays clear in those windows). Affected most panels from the Window and Tools menus once undocked: World Bookmarks, Levels, Data Layers, Message Log, Class Viewer...
 - Toolbar in Tab Bar: closing some asset editors (Skeletal Mesh) could crash the editor (a closed editor's toolbar was kept alive).

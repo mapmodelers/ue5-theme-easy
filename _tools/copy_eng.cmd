@@ -19,6 +19,7 @@ for /f "delims=" %%P in ('where /r "%E%\Source\Developer\ToolMenus" ToolMenus.cp
 for /f "delims=" %%P in ('where /r "%E%\Source\Editor\WorldBrowser" *.cpp 2^>nul') do copy /y "%%P" "%D%\WB_%%~nxP" >nul
 for /f "delims=" %%P in ('where /r "%E%\Source\Editor\LevelEditor\Private" LevelEditor.cpp 2^>nul') do copy /y "%%P" "%D%\" >nul
 for /f "delims=" %%P in ('where /r "%E%\Source\Editor\WorkspaceMenuStructure" *.cpp *.h 2^>nul') do copy /y "%%P" "%D%\" >nul
+for /f "delims=" %%P in ('where /r "%E%\Source\Editor" *HomeScreen*.cpp *HomeScreen*.h 2^>nul') do copy /y "%%P" "%D%\" >nul
 if not exist "%D%\Themes" mkdir "%D%\Themes"
 copy /y "%E%\Content\Slate\Themes\*.json" "%D%\Themes\" >nul 2>&1
 if not exist "%D%\Splash" mkdir "%D%\Splash"

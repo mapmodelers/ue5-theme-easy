@@ -45,10 +45,11 @@ From source: copy `Plugin/EasyTheme` instead (Visual Studio required, the editor
 
 | Where | What |
 |---|---|
-| Window > Easy Theme > Dark / Light | Switch the theme (live) |
+| Window > Easy Theme > Dark / Light / Compact | Switch the theme (Dark/Light live; Compact = Unreal's own colours, at next start) |
 | Window > Easy Theme > Light Graphs | Light canvas for graphs in Light mode (on by default) |
 | Window > Easy Theme > Refresh UI | Rebuild every panel in the current theme |
 | Window > Easy Theme > Use 3-Pane Layout | Optional compact layout (also in Window > Load Layout) |
+| Window > Easy Theme > Show Home Tab | Unreal's Home tab (hidden by default, at next start) |
 | Window > Easy Theme > Toolbar in Tab Bar | Tabs and the main toolbar on one row, + button for recent levels and assets (on by default) |
 | Window > Easy Theme > Check for Updates | Asks GitHub for a newer release; GitHub installs can install it when Unreal closes |
 | Window > Easy Theme > Report a Bug... | Pre-filled GitHub issue + local screenshot and cleaned-up log to attach (optional) |

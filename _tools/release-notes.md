@@ -1,6 +1,12 @@
 Clean, compact, high-clarity editor theme for Unreal Engine 5. Dark by default, Light included.
 
-**Install:** unzip `EasyTheme-0.2.3-UE5.8-Win64.zip` into `YourProject/Plugins/` (or `Engine/Plugins/Marketplace/` for every project), then start the editor. Prebuilt for UE 5.8, Win64. Options: **Window > Easy Theme**.
+**Install:** unzip `EasyTheme-0.2.4-UE5.8-Win64.zip` into `YourProject/Plugins/` (or `Engine/Plugins/Marketplace/` for every project), then start the editor. Prebuilt for UE 5.8, Win64. Options: **Window > Easy Theme**.
+
+**In 0.2.4** (thanks to the Reddit testers for the feedback)
+- New look: Compact. Unreal's own colours with the compact layout, square corners and all fixes (asked by u/LeFlambeurHimself).
+- Home tab hidden by default; Window > Easy Theme > Layout > Show Home Tab brings it back (thanks u/LeFlambeurHimself).
+- The Look menu now shows which look is active (thanks u/LeFlambeurHimself).
+- Square corners everywhere, plugin panels included (thanks u/LostInTheRapGame).
 
 **In 0.2.3**
 - Floating panels (World Bookmarks, Levels, Message Log, most Window and Tools panels): their tabs were hidden under the title bar.
