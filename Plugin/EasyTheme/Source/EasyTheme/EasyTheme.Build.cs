@@ -21,7 +21,9 @@ public class EasyTheme : ModuleRules
 			"UnrealEd",
 			"HTTP",
 			"Json",
-			"MainFrame"
+			"MainFrame",
+			"WorkspaceMenuStructure",
+			"AssetRegistry"
 		});
 	}
 }

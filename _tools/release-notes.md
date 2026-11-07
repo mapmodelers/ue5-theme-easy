@@ -1,6 +1,11 @@
 Clean, compact, high-clarity editor theme for Unreal Engine 5. Dark by default, Light included.
 
-**Install:** unzip `EasyTheme-0.2.2-UE5.8-Win64.zip` into `YourProject/Plugins/` (or `Engine/Plugins/Marketplace/` for every project), then start the editor. Prebuilt for UE 5.8, Win64. Options: **Window > Easy Theme**.
+**Install:** unzip `EasyTheme-0.2.3-UE5.8-Win64.zip` into `YourProject/Plugins/` (or `Engine/Plugins/Marketplace/` for every project), then start the editor. Prebuilt for UE 5.8, Win64. Options: **Window > Easy Theme**.
+
+**In 0.2.3**
+- Floating panels (World Bookmarks, Levels, Message Log, most Window and Tools panels): their tabs were hidden under the title bar.
+- Fixed a crash when closing some asset editors (Skeletal Mesh) with Toolbar in Tab Bar on.
+- Light: plugin editors (PCG, StateTree, Niagara, import dialog, Plugins window) follow the light look; node titles readable; disabled text readable in both modes.
 
 **In 0.2.2**
 - Toolbar in Tab Bar (on by default): tabs and main toolbar share one row, + button for recent levels and assets. Switch: Window > Easy Theme > Layout.

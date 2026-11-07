@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.3
+- Floating panels: their tabs were hidden under the window's title bar (Unreal draws the title bar over the tab row there; it now stays clear in those windows). Affected most panels from the Window and Tools menus once undocked: World Bookmarks, Levels, Data Layers, Message Log, Class Viewer...
+- Toolbar in Tab Bar: closing some asset editors (Skeletal Mesh) could crash the editor (a closed editor's toolbar was kept alive).
+- Texture editor: R/G/B/A buttons no longer cut in the tab row.
+- Disabled text readable: Dark #C0C0C0 and Light #303030 before Unreal's own dimming (was about 1.6:1 contrast, now about 2.4:1).
+- Light: graph node titles in white on their darkened colour (black on dark red before); plugin style sets get the light pass too (PCG, StateTree, Interchange import dialog, Take Recorder, Niagara, Plugins window), including plugins that load later.
+
 ## 0.2.2
 - Toolbar in Tab Bar (on by default): tabs and the editor toolbars share one row (level editor and docked asset editors), at a fixed height so switching tabs keeps everything in place; tabs get an adaptive width; a + button opens recent levels and recent assets. Frees a row for the viewport. Window > Easy Theme > Layout > Toolbar in Tab Bar, or console `EasyTheme.TabToolbar 0|1`.
 - Graph node titles readable: bright title colours are darkened under the white title text.

@@ -78,6 +78,11 @@
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformOutputDevices.h"
 #include "Internationalization/Regex.h"
+#include "Framework/Docking/WorkspaceItem.h"
+#include "WorkspaceMenuStructure.h"
+#include "WorkspaceMenuStructureModule.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "Widgets/Text/STextBlock.h"
 
 #include "GenericPlatform/ICursor.h"
 #if PLATFORM_WINDOWS
@@ -222,14 +227,14 @@ namespace EasyTheme
 		TEXT("D4D0C8"), TEXT("808080"), TEXT("C1D2EE"), TEXT("0A246A"),
 		TEXT("FFFFE1"), TEXT("000000"), TEXT("ECE9E2"),
 		TEXT("FFFFFF"), TEXT("F4F3EF"), TEXT("E6EEF9"),
-		TEXT("D4D0C8"), TEXT("000000"), TEXT("808080"),
+		TEXT("D4D0C8"), TEXT("000000"), TEXT("303030"),   // disabled text: Slate lightens it about half again
 		TEXT("D8D5CE"), TEXT("C4C0B8"), TEXT("ADA9A1"), TEXT("8C8880") };
 
 	static const FFlat GDarkFlat = { TEXT("2E2E2E"), TEXT("1A1A1A"), TEXT("4A4F58"),
 		TEXT("3A3A3A"), TEXT("1A1A1A"), TEXT("3D5A8C"), TEXT("6F8FC8"),
 		TEXT("F0F0F0"), TEXT("101010"), TEXT("2A2A2A"),
 		TEXT("262626"), TEXT("2C2C2C"), TEXT("3A404A"),
-		TEXT("3A3A3A"), TEXT("E6E6E6"), TEXT("808080"),
+		TEXT("3A3A3A"), TEXT("E6E6E6"), TEXT("C0C0C0"),   // disabled text: Slate dims it about half again
 		TEXT("262626"), TEXT("303030"), TEXT("3A3A3A"), TEXT("4A4A4A") };
 
 	// ---------------------------------------------------------------- colours
@@ -491,6 +496,58 @@ namespace EasyTheme
 		Note(FString::Printf(TEXT("OK   light-text styles %s: %d"), GDark ? TEXT("restored") : TEXT("darkened"), Fixed));
 	}
 
+	// Light: plugin panels fill their backgrounds with fixed dark greys of their own (import dialog
+	// cards, PCG/StateTree panels, Take Recorder...), under text that follows the theme (black in
+	// Light). Neutral dark fills become the matching light grey; separators, shadows, overlays and
+	// graph or viewport areas keep theirs. Dark puts the originals back.
+	static TMap<FSlateBrush*, FSlateColor> GFillOriginal;
+	static void FixDarkFills(const TArray<const ISlateStyle*>& Sets)
+	{
+		static const TCHAR* Keep[] = { TEXT("Viewport"), TEXT("Graph"), TEXT("Node"), TEXT("Overlay"), TEXT("Shadow"), TEXT("Separator"),
+			TEXT("Select"), TEXT("Highlight"), TEXT("Black"), TEXT("ToolTip"), TEXT("Tooltip"), TEXT("Splitter"), TEXT("Drop"),
+			TEXT("Outline"), TEXT("Focus"), TEXT("Wire"), TEXT("Curve"), TEXT("Timeline"), TEXT("Track"), TEXT("Sequencer") };
+		int32 Fixed = 0;
+		for (const ISlateStyle* S : Sets)
+		{
+			for (const FName& Key : S->GetStyleKeys())
+			{
+				const FSlateBrush* B = S->GetOptionalBrush(Key, nullptr, nullptr);
+				if (!B) { continue; }
+				FSlateBrush* M = const_cast<FSlateBrush*>(B);
+				if (!GFillOriginal.Contains(M))
+				{
+					const bool bFill = B->DrawAs == ESlateBrushDrawType::Box || B->DrawAs == ESlateBrushDrawType::Border
+						|| B->DrawAs == ESlateBrushDrawType::RoundedBox || (B->DrawAs == ESlateBrushDrawType::Image && B->GetResourceName().IsNone());
+					if (!bFill || !B->TintColor.IsColorSpecified() || IsLinked(B->TintColor)) { continue; }
+					const FColor C = B->TintColor.GetSpecifiedColor().ToFColor(true);
+					const bool bNeutral = FMath::Max3(C.R, C.G, C.B) - FMath::Min3(C.R, C.G, C.B) <= 6;
+					if (!bNeutral || C.A < 128 || C.R < 0x10 || C.R > 0x40) { continue; }
+					const FString K = Key.ToString();
+					bool bKeep = false;
+					for (const TCHAR* W : Keep) { if (K.Contains(W)) { bKeep = true; break; } }
+					if (bKeep) { continue; }
+					GFillOriginal.Add(M, B->TintColor);
+				}
+				const FSlateColor& Orig = GFillOriginal[M];
+				const FColor C = Orig.GetSpecifiedColor().ToFColor(true);
+				const uint8 V = (uint8)FMath::Clamp(255 - (int32)C.R + 20, 0, 255);   // #242424 -> #EFEFEF, #383838 -> #DBDBDB
+				M->TintColor = GDark ? Orig : FSlateColor(FLinearColor(FColor(V, V, V, C.A)));
+				++Fixed;
+			}
+		}
+		Note(FString::Printf(TEXT("OK   plugin dark fills %s: %d"), GDark ? TEXT("restored") : TEXT("lightened"), Fixed));
+	}
+
+	// Plugins register their styles when they load, often after the theme was applied: the set
+	// count is watched and the two passes above run again for newcomers.
+	static int32 GStyleSetCount = 0;
+	static int32 CountStyleSets()
+	{
+		int32 N = 0;
+		FSlateStyleRegistry::IterateAllStyles([&N](const ISlateStyle&) { ++N; return true; });
+		return N;
+	}
+
 	// Name fields (Details header, inline rename) draw their resting text in the theme's White,
 	// which stays white in Light. Those go to the text colour in Light and back in Dark.
 	static TMap<FTextBlockStyle*, FSlateColor> GWhiteText;
@@ -502,6 +559,27 @@ namespace EasyTheme
 			GWhiteText.Add(&T, T.ColorAndOpacity);
 		}
 		T.ColorAndOpacity = GDark ? GWhiteText[&T] : Ink;
+	}
+
+	// Every text style drawn in the theme's White (plugin names in the Plugins window, Niagara
+	// headings...): the text colour in Light. Badges, banners, graphs and viewports keep white:
+	// they sit on coloured or dark fills.
+	static void InkThemeWhiteText(const TArray<const ISlateStyle*>& Sets, const FSlateColor& Ink)
+	{
+		static const TCHAR* Keep[] = { TEXT("Beta"), TEXT("Warning"), TEXT("Error"), TEXT("Badge"), TEXT("Primary"), TEXT("Tag"),
+			TEXT("Count"), TEXT("Pill"), TEXT("Experimental"), TEXT("Notification"), TEXT("Toast"), TEXT("Graph"), TEXT("Node"),
+			TEXT("Viewport"), TEXT("Overlay"), TEXT("Kismet"), TEXT("Selected"), TEXT("Highlight") };
+		for (const ISlateStyle* S : Sets)
+		{
+			for (const FName& Key : S->GetStyleKeys())
+			{
+				if (!S->HasWidgetStyle<FTextBlockStyle>(Key)) { continue; }
+				const FString K = Key.ToString();
+				bool bKeep = false;
+				for (const TCHAR* W : Keep) { if (K.Contains(W)) { bKeep = true; break; } }
+				if (!bKeep) { InkWhiteText(*const_cast<FTextBlockStyle*>(&S->GetWidgetStyle<FTextBlockStyle>(Key)), Ink); }
+			}
+		}
 	}
 
 	static void ApplyRemaps()
@@ -876,6 +954,15 @@ namespace EasyTheme
 			W.BackgroundBrush = FaceFill;
 		});
 
+		// Graph node titles sit on their (darkened) title colour in both modes: white text, as in Dark.
+		// Stock uses the text colour, which is black in Light (black on a dark red event title).
+		PatchStyle<FTextBlockStyle>(Sets, TEXT("Graph.Node.NodeTitle"), [](FTextBlockStyle& T) { T.ColorAndOpacity = FSlateColor(FLinearColor::White); });
+		PatchStyle<FInlineEditableTextBlockStyle>(Sets, TEXT("Graph.Node.NodeTitleInlineEditableText"),
+			[](FInlineEditableTextBlockStyle& T) { T.TextStyle.ColorAndOpacity = FSlateColor(FLinearColor::White); });
+
+		// Texture editor R/G/B/A toggles (12 pt bold, 4 px padding) were taller than the toolbar row.
+		PatchStyle<FCheckBoxStyle>(Sets, TEXT("TextureEditor.ChannelButtonStyle"), [](FCheckBoxStyle& C) { C.Padding = FMargin(8.f, 1.f); });
+
 		PatchStyle<FTableRowStyle>(Sets, TEXT("TableView.Row"), Row);
 		PatchStyle<FTableRowStyle>(Sets, TEXT("SceneOutliner.TableViewRow"), Row);
 		PatchStyle<FTableRowStyle>(Sets, TEXT("ContentBrowser.AssetListView.ColumnListTableRow"), Row);
@@ -979,7 +1066,11 @@ namespace EasyTheme
 		// Unreal draws tooltip text in hard-coded black (SToolTip, SDocumentationToolTip), so the
 		// tooltip stays light in both modes: classic yellow in Light, light grey in Dark.
 
-		FixLightText(Sets, Ink, FSlateColor(Hex(TEXT("505050"))));
+		// Every style set, plugins included (Niagara, PCG, StateTree, Interchange, Insights...).
+		FixLightText(AllStyleSets(), Ink, FSlateColor(Hex(TEXT("505050"))));
+		FixDarkFills(AllStyleSets());
+		InkThemeWhiteText(AllStyleSets(), Ink);
+		GStyleSetCount = CountStyleSets();
 
 		// ---- every text-entry style: typed, focused and read-only text all in the text colour
 		// (a search box showed white typed text on its white field).
@@ -1345,7 +1436,7 @@ namespace EasyTheme
 		TArray<FString> Out;
 		const FWidgetStyle WS;
 		int32 Keys = 0;
-		for (const ISlateStyle* S : StyleSets())
+		for (const ISlateStyle* S : AllStyleSets())
 		{
 			const FString SetName = S->GetStyleSetName().ToString();
 			for (const FName& Key : S->GetStyleKeys())
@@ -1356,7 +1447,7 @@ namespace EasyTheme
 					const bool bFill = B->DrawAs == ESlateBrushDrawType::Box || B->DrawAs == ESlateBrushDrawType::Border
 						|| B->DrawAs == ESlateBrushDrawType::RoundedBox || B->GetResourceName().IsNone();
 					const FLinearColor C = B->TintColor.GetColor(WS);
-					if (bFill && C.A > 0.5f && Lum(C) < 0.05f && B->DrawAs != ESlateBrushDrawType::NoDrawType)
+					if (bFill && C.A > 0.5f && Lum(C) < 0.05f && B->DrawAs != ESlateBrushDrawType::NoDrawType && !GDark)
 					{
 						Out.Add(FString::Printf(TEXT("DARK FILL  %s.%s #%s %s"), *SetName, *Key.ToString(), *C.ToFColor(true).ToHex().Left(6),
 							B->TintColor.IsColorSpecified() ? TEXT("fixed") : TEXT("theme")));
@@ -1368,7 +1459,7 @@ namespace EasyTheme
 					const FLinearColor C = TC.GetColor(WS);
 					if (!IsInherited(TC) && C.A > 0.5f && Lum(C) > 0.45f)
 					{
-						Out.Add(FString::Printf(TEXT("LIGHT TEXT %s.%s #%s"), *SetName, *Key.ToString(), *C.ToFColor(true).ToHex().Left(6)));
+						Out.Add(FString::Printf(TEXT("LIGHT TEXT %s.%s #%s %s"), *SetName, *Key.ToString(), *C.ToFColor(true).ToHex().Left(6), IsLinked(TC) ? TEXT("theme") : TEXT("fixed")));
 					}
 				}
 				if (S->HasWidgetStyle<FButtonStyle>(Key))
@@ -1457,6 +1548,15 @@ namespace EasyTheme
 			Note(TEXT("OK   crosshair cursor -> arrow"));
 		}
 #endif
+	}
+
+	static void FixNewStyleSets()
+	{
+		GStyleSetCount = CountStyleSets();
+		const FFlat& F = GDark ? GDarkFlat : GLightFlat;
+		FixLightText(AllStyleSets(), FSlateColor(Hex(F.Ink)), FSlateColor(Hex(TEXT("505050"))));
+		FixDarkFills(AllStyleSets());
+		InkThemeWhiteText(AllStyleSets(), FSlateColor(Hex(F.Ink)));
 	}
 
 	static void ApplyAll()
@@ -1953,10 +2053,12 @@ namespace EasyTheme
 	struct FTabBarState
 	{
 		TWeakPtr<SDockTab> Tab;
-		TSharedPtr<SWidget> Toolbar;     // the moved toolbar (null if this editor has none)
+		// Weak on purpose: the tab owns these through our content. A strong reference kept a closed
+		// editor's toolbar alive, and Unreal's menu refresh then called into the dead editor (crash).
+		TWeakPtr<SWidget> Toolbar;       // the moved toolbar (null if this editor has none)
 		TWeakPtr<SVerticalBox> Box;      // its original parent
 		TWeakPtr<SWidget> Content;       // our content right of the tabs
-		TSharedPtr<SWidget> OrigRight;   // what the tab had there before
+		TWeakPtr<SWidget> OrigRight;     // what the tab had there before
 	};
 	static TArray<FTabBarState> GTabBars;
 
@@ -2122,8 +2224,10 @@ namespace EasyTheme
 		TSharedRef<SBox> Box = SNew(SBox);
 		TWeakPtr<SWidget> Weak = Box;
 		TWeakPtr<SWidget> WeakPlus = Plus;
-		const bool bRight = S.OrigRight.IsValid() && S.OrigRight != SNullWidget::NullWidget;
-		TWeakPtr<SWidget> WeakRight = bRight ? TWeakPtr<SWidget>(S.OrigRight) : TWeakPtr<SWidget>();
+		const TSharedPtr<SWidget> Toolbar = S.Toolbar.Pin();
+		const TSharedPtr<SWidget> Right = S.OrigRight.Pin();
+		const bool bRight = Right.IsValid() && Right != SNullWidget::NullWidget;
+		TWeakPtr<SWidget> WeakRight = bRight ? TWeakPtr<SWidget>(Right) : TWeakPtr<SWidget>();
 		// When the row is full the toolbar gets what is left and shows Unreal's own ">>" overflow
 		// button for the rest, instead of running off the window.
 		TSharedRef<SBox> Fit = SNew(SBox)
@@ -2138,7 +2242,7 @@ namespace EasyTheme
 				const float Used = TabBarShift(Weak).Left + P->GetDesiredSize().X + 8.f + (R.IsValid() ? R->GetDesiredSize().X : 0.f) + 4.f;
 				return FOptionalSize(FMath::Max(32.f, BoxW - Used));
 			}))
-			[ S.Toolbar.IsValid() ? S.Toolbar.ToSharedRef() : SNullWidget::NullWidget ];
+			[ Toolbar.IsValid() ? Toolbar.ToSharedRef() : SNullWidget::NullWidget ];
 		TSharedRef<SHorizontalBox> Row = SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
 				.Padding(TAttribute<FMargin>::CreateLambda([Weak]() { return TabBarShift(Weak); }))[ Plus ]
@@ -2146,7 +2250,7 @@ namespace EasyTheme
 			+ SHorizontalBox::Slot().FillWidth(1.f)[ SNullWidget::NullWidget ];
 		if (bRight)
 		{
-			Row->AddSlot().AutoWidth().VAlign(VAlign_Center)[ S.OrigRight.ToSharedRef() ];
+			Row->AddSlot().AutoWidth().VAlign(VAlign_Center)[ Right.ToSharedRef() ];
 		}
 		Box->SetContent(Row);
 		const TAttribute<FOptionalSize> Width = TAttribute<FOptionalSize>::CreateLambda([Weak]() { return TabBarWidth(Weak); });
@@ -2190,6 +2294,7 @@ namespace EasyTheme
 
 			// 1. toolbar out of its row (again, if the editor rebuilt it)
 			bool bChanged = false;
+			TSharedPtr<SWidget> Moved;   // keeps a just-detached toolbar alive until our content holds it
 			// Cached box while it lives (a rebuilt editor gets a new one); search only otherwise.
 			TSharedPtr<SVerticalBox> Box = S->Box.Pin();
 			if (!Box.IsValid()) { Box = FindToolbarBox(Tab->GetContent()); }
@@ -2198,7 +2303,7 @@ namespace EasyTheme
 				TSharedRef<SWidget> First = Box->GetChildren()->GetChildAt(0);
 				if (First != SNullWidget::NullWidget || S->Box.Pin() != Box)
 				{
-					if (First != SNullWidget::NullWidget) { S->Toolbar = First; }
+					if (First != SNullWidget::NullWidget) { S->Toolbar = First; Moved = First; }
 					S->Box = Box;
 					Box->GetSlot(0).AttachWidget(SNullWidget::NullWidget);
 					SetBoxPadding(Box, 0.f);
@@ -2217,11 +2322,11 @@ namespace EasyTheme
 				{
 					Reported.Add(Key);
 					FString D = FString::Printf(TEXT("     tabrow %s: row %.0f tab %.0f toolbar %.0f |"), *Key,
-						Ours->GetTickSpaceGeometry().GetLocalSize().Y, Tab->GetDesiredSize().Y, S->Toolbar.IsValid() ? S->Toolbar->GetDesiredSize().Y : 0.f);
+						Ours->GetTickSpaceGeometry().GetLocalSize().Y, Tab->GetDesiredSize().Y, S->Toolbar.IsValid() ? S->Toolbar.Pin()->GetDesiredSize().Y : 0.f);
 					// toolbar children heights (blocks)
-					if (S->Toolbar.IsValid())
+					if (TSharedPtr<SWidget> TB = S->Toolbar.Pin())
 					{
-						TSharedPtr<SWidget> MB = FindByType(S->Toolbar.ToSharedRef(), FName(TEXT("SMultiBoxWidget")), 6, [](const TSharedRef<SWidget>&) { return true; });
+						TSharedPtr<SWidget> MB = FindByType(TB.ToSharedRef(), FName(TEXT("SMultiBoxWidget")), 6, [](const TSharedRef<SWidget>&) { return true; });
 						if (MB.IsValid()) { D += FString::Printf(TEXT(" multibox %.0f"), MB->GetDesiredSize().Y); }
 					}
 					Note(D);
@@ -2239,21 +2344,93 @@ namespace EasyTheme
 	{
 		for (FTabBarState& S : GTabBars)
 		{
+			// Pin first: our content (about to be dropped) is what keeps them alive.
+			const TSharedPtr<SWidget> Toolbar = S.Toolbar.Pin();
+			const TSharedPtr<SWidget> Right = S.OrigRight.Pin();
 			if (TSharedPtr<SDockTab> Tab = S.Tab.Pin())
 			{
-				Tab->SetRightContent(S.OrigRight.IsValid() ? S.OrigRight.ToSharedRef() : SNullWidget::NullWidget);
+				Tab->SetRightContent(Right.IsValid() ? Right.ToSharedRef() : SNullWidget::NullWidget);
 			}
 			TSharedPtr<SVerticalBox> Box = S.Box.Pin();
 			if (Box.IsValid())
 			{
-				if (S.Toolbar.IsValid() && Box->GetChildren()->GetChildAt(0) == SNullWidget::NullWidget)
+				if (Toolbar.IsValid() && Box->GetChildren()->GetChildAt(0) == SNullWidget::NullWidget)
 				{
-					Box->GetSlot(0).AttachWidget(S.Toolbar.ToSharedRef());
+					Box->GetSlot(0).AttachWidget(Toolbar.ToSharedRef());
 				}
 				SetBoxPadding(Box, 2.f);
 			}
 		}
 		GTabBars.Reset();
+	}
+
+	// Floating panels: Unreal draws the window title bar over the panel's own tab row there (the
+	// tabs sit beside the window buttons) and keeps that title bar transparent. Our title brushes
+	// are opaque, which hid the tabs. So wherever tabs actually sit under a title bar, that title
+	// bar goes clear; windows with a menu row (main window, asset editors) keep the themed title.
+	// Top-level windows and their children (floating panels are child windows of the main window).
+	static TArray<TSharedRef<SWindow>> AllWindows()
+	{
+		TArray<TSharedRef<SWindow>> Out = FSlateApplication::Get().GetTopLevelWindows();
+		for (int32 i = 0; i < Out.Num(); ++i) { Out.Append(Out[i]->GetChildWindows()); }
+		return Out;
+	}
+
+	static bool GFloatTitleFix = true;   // dev switch: EasyTheme.FloatTitle 0|1
+	static TArray<TWeakPtr<SWidget>> GClearedBars;
+	static TArray<TPair<TWeakPtr<SWindow>, int32>> GTitleTries;
+	static TArray<TWeakPtr<IWindowTitleBar>> GSeenTitleBars;
+
+	static void FixFloatingTitleBars()
+	{
+		if (!GFloatTitleFix || !FSlateApplication::IsInitialized()) { return; }
+		static FSlateNoResource Clear;
+		GSeenTitleBars.RemoveAll([](const TWeakPtr<IWindowTitleBar>& T) { return !T.IsValid(); });
+		GTitleTries.RemoveAll([](const TPair<TWeakPtr<SWindow>, int32>& P) { return !P.Key.IsValid(); });
+		for (const TSharedRef<SWindow>& W : AllWindows())
+		{
+			TSharedPtr<IWindowTitleBar> T = W->GetTitleBar();
+			if (!T.IsValid() || GSeenTitleBars.ContainsByPredicate([&T](const TWeakPtr<IWindowTitleBar>& S) { return S.Pin() == T; })) { continue; }
+			// The title bar a docking area made for its window (not a dialog's own title row).
+			// (Some windows also hold an unused, never laid out title bar: take the one on screen.)
+			TSharedPtr<SWidget> Bar = FindByType(W, FName(TEXT("SWindowTitleBar")), 12, [](const TSharedRef<SWidget>& V)
+			{
+				if (V->GetTickSpaceGeometry().GetLocalSize().Y <= 0.f) { return false; }
+				TSharedPtr<SWidget> P = V->GetParentWidget();
+				for (int32 i = 0; i < 4 && P.IsValid(); ++i, P = P->GetParentWidget())
+				{
+					if (P->GetType() == FName(TEXT("SDockingArea"))) { return true; }
+				}
+				return false;
+			});
+			// Gives up on a window after about 5 s of frames (one that never shows tabs).
+			TPair<TWeakPtr<SWindow>, int32>* Tries = GTitleTries.FindByPredicate([&W](const TPair<TWeakPtr<SWindow>, int32>& P) { return P.Key.Pin() == W; });
+			if (!Tries) { Tries = &GTitleTries.Add_GetRef(TPair<TWeakPtr<SWindow>, int32>(W, 0)); }
+			if (++Tries->Value > 300) { GSeenTitleBars.Add(T); continue; }
+			if (!Bar.IsValid())
+			{
+				// A dialog's own title row (no docking area): never concerned. Otherwise not laid out yet.
+				if (!FindByType(W, FName(TEXT("SDockingArea")), 6, [](const TSharedRef<SWidget>&) { return true; }).IsValid()) { GSeenTitleBars.Add(T); }
+				continue;
+			}
+			// Decide once the tabs are laid out too.
+			if (!FindByType(W, FName(TEXT("SDockTab")), 40, [](const TSharedRef<SWidget>& V) { return V->GetTickSpaceGeometry().GetLocalSize().Y > 0.f; }).IsValid()) { continue; }
+			const FGeometry& BG = Bar->GetTickSpaceGeometry();
+			GSeenTitleBars.Add(T);
+			const float TitleTop = BG.GetAbsolutePosition().Y, TitleBottom = TitleTop + BG.GetAbsoluteSize().Y;
+			const bool bTabUnder = FindByType(W, FName(TEXT("SDockTab")), 40, [TitleTop, TitleBottom](const TSharedRef<SWidget>& V)
+			{
+				const FGeometry& G = V->GetTickSpaceGeometry();
+				const float Top = G.GetAbsolutePosition().Y;
+				return G.GetLocalSize().Y > 0.f && Top + 2.f < TitleBottom && Top + G.GetAbsoluteSize().Y > TitleTop;
+			}).IsValid();
+			FChildren* C = Bar->GetChildren();
+			if (!bTabUnder || !C || C->Num() == 0 || C->GetChildAt(0)->GetType() != FName(TEXT("SBorder"))) { continue; }
+			StaticCastSharedRef<SBorder>(C->GetChildAt(0))->SetBorderImage(&Clear);
+			GClearedBars.RemoveAll([](const TWeakPtr<SWidget>& B) { return !B.IsValid(); });
+			GClearedBars.Add(Bar);
+			if (GDev) { Note(FString::Printf(TEXT("OK   floating title bar clear: '%s'"), *W->GetTitle().ToString())); }
+		}
 	}
 
 	static void SetToolbarInTitle(bool bOn)
@@ -2262,6 +2439,433 @@ namespace EasyTheme
 		GConfig->SetBool(GConfigSection, TEXT("ToolbarInTabBar"), bOn, GEditorSettingsIni);
 		GConfig->Flush(false, GEditorSettingsIni);
 		if (bOn) { EnsureToolbarInTitle(); } else { RestoreToolbarRow(); }
+	}
+
+	// ---- Sweep (dev): every panel of the Window menu and one asset per common type, docked and
+	// floating, screenshot + layout checks. Results: Saved/EasyTheme/sweep/ and sweep_d.txt / sweep_l.txt.
+	//   TEXT CUT    a text block squeezed below its own height (letters cut top/bottom)
+	//   OVERLAP     two neighbours in a row/column drawn over each other
+	//   UNDER TITLE a tab drawn under its window's title bar
+	struct FSweepItem { FName Tab; FString Asset; bool bFloat = false; };
+	struct FSweepState
+	{
+		TArray<FSweepItem> Items;
+		int32 Index = 0;
+		TArray<FString> Findings;
+		TSet<FString> Seen;
+		TSet<FName> WasOpen;
+		TWeakPtr<SDockTab> Current;
+		TWeakObjectPtr<UObject> Asset;
+		int32 Shots = 0;
+	};
+	static FSweepState GSweep;
+
+	static FString SweepDir() { return ReportDir() / TEXT("sweep"); }
+
+	static FSlateRect RectOf(const TSharedRef<SWidget>& W)
+	{
+		const FGeometry& G = W->GetTickSpaceGeometry();
+		const FVector2D P = G.GetAbsolutePosition();
+		return FSlateRect(P, P + G.GetAbsoluteSize());
+	}
+
+	static FString Trail(const TArray<TSharedRef<SWidget>>& Path)
+	{
+		TArray<FString> Parts;
+		for (int32 i = FMath::Max(0, Path.Num() - 4); i < Path.Num(); ++i) { Parts.Add(Path[i]->GetTypeAsString()); }
+		return FString::Join(Parts, TEXT(">"));
+	}
+
+	static void SweepFind(const FString& Ctx, const FString& What)
+	{
+		if (GSweep.Seen.Contains(What)) { return; }   // same finding in several panels: once
+		GSweep.Seen.Add(What);
+		GSweep.Findings.Add(FString::Printf(TEXT("%-28s %s"), *Ctx, *What));
+	}
+
+	static int32 GSweepVisited = 0, GSweepTabs = 0;
+	static TArray<FString> GSweepInfo;
+	struct FTextProbe { FSlateRect R; FString Text; FString Where; };
+	static TArray<FTextProbe> GSweepTexts;
+
+	static float LinLum(const FColor& C)
+	{
+		auto L = [](uint8 V) { const float X = V / 255.f; return X <= 0.04045f ? X / 12.92f : FMath::Pow((X + 0.055f) / 1.055f, 2.4f); };
+		return 0.2126f * L(C.R) + 0.7152f * L(C.G) + 0.0722f * L(C.B);
+	}
+
+	// LOW CONTRAST: on the window's own pixels, the strongest letter pixel of each text against the
+	// background around it (contrast ratio as WCAG computes it; below 1.8:1 is hard to read).
+	static void CheckContrast(const TSharedRef<SWindow>& W, const FString& Ctx)
+	{
+		if (GSweepTexts.Num() == 0) { return; }
+		TArray<FColor> Px; FIntVector Size;
+		if (!FSlateApplication::Get().TakeScreenshot(W, Px, Size) || Px.Num() == 0) { GSweepTexts.Reset(); return; }
+		const FVector2D O = W->GetPositionInScreen();
+		for (const FTextProbe& T : GSweepTexts)
+		{
+			const int32 X0 = FMath::Clamp(FMath::FloorToInt(T.R.Left - O.X), 0, Size.X), X1 = FMath::Clamp(FMath::CeilToInt(T.R.Right - O.X), 0, Size.X);
+			const int32 Y0 = FMath::Clamp(FMath::FloorToInt(T.R.Top - O.Y), 0, Size.Y), Y1 = FMath::Clamp(FMath::CeilToInt(T.R.Bottom - O.Y), 0, Size.Y);
+			if (X1 - X0 < 4 || Y1 - Y0 < 6) { continue; }
+			TArray<float> Edge;
+			for (int32 x = X0; x < X1; ++x) { Edge.Add(LinLum(Px[Y0 * Size.X + x])); Edge.Add(LinLum(Px[(Y1 - 1) * Size.X + x])); }
+			for (int32 y = Y0; y < Y1; ++y) { Edge.Add(LinLum(Px[y * Size.X + X0])); Edge.Add(LinLum(Px[y * Size.X + X1 - 1])); }
+			Edge.Sort();
+			const float Bg = Edge[Edge.Num() / 2];
+			float Far = Bg; int32 Ink = 0; FColor FarC(0, 0, 0), BgC(0, 0, 0);
+			for (int32 y = Y0 + 1; y < Y1 - 1; ++y)
+			{
+				for (int32 x = X0 + 1; x < X1 - 1; ++x)
+				{
+					const FColor& C = Px[y * Size.X + x];
+					const float L = LinLum(C);
+					if (FMath::Abs(L - Bg) > 0.01f) { ++Ink; }
+					if (FMath::Abs(L - Bg) > FMath::Abs(Far - Bg)) { Far = L; FarC = C; }
+					if (FMath::Abs(L - Bg) < 0.002f) { BgC = C; }
+				}
+			}
+			if (Ink < 6) { continue; }   // nothing drawn there (scrolled away or empty)
+			const float Ratio = (FMath::Max(Bg, Far) + 0.05f) / (FMath::Min(Bg, Far) + 0.05f);
+			if (Ratio < 1.8f)
+			{
+				SweepFind(Ctx, FString::Printf(TEXT("LOW CONTRAST '%s' %.2f:1 text #%02X%02X%02X on #%02X%02X%02X at %.0f,%.0f in %s"), *T.Text, Ratio,
+					FarC.R, FarC.G, FarC.B, BgC.R, BgC.G, BgC.B, T.R.Left - O.X, T.R.Top - O.Y, *T.Where));
+			}
+		}
+		GSweepTexts.Reset();
+	}
+
+	static bool Inside(const FSlateRect& R, const FSlateRect& Clip)
+	{
+		return R.Left >= Clip.Left - 1.f && R.Top >= Clip.Top - 1.f && R.Right <= Clip.Right + 1.f && R.Bottom <= Clip.Bottom + 1.f;
+	}
+
+	static void CheckTree(const TSharedRef<SWidget>& Root, const FString& Ctx, TArray<TSharedRef<SWidget>>& Path,
+		const FSlateRect* Title, int32 Depth, FSlateRect Clip)
+	{
+		if (Depth > 90 || !Root->GetVisibility().IsVisible()) { return; }
+		++GSweepVisited;
+		Path.Add(Root);
+		const FName Type = Root->GetType();
+		const FGeometry& G = Root->GetTickSpaceGeometry();
+		const FVector2D Local = G.GetLocalSize();
+		// What is actually visible: scroll areas and lists clip their content.
+		if (Root->GetClipping() != EWidgetClipping::Inherit) { Clip = Clip.IntersectionWith(RectOf(Root)); }
+		if (Type == FName(TEXT("STextBlock")) && Local.X > 1.f && Local.Y > 1.f && Inside(RectOf(Root), Clip))
+		{
+			const FString Text = StaticCastSharedRef<STextBlock>(Root)->GetText().ToString().Left(40);
+			const float Want = Root->GetDesiredSize().Y;
+			if (!Text.TrimStartAndEnd().IsEmpty() && Local.Y >= 8.f && Local.Y <= 40.f) { GSweepTexts.Add({ RectOf(Root), Text, Trail(Path) }); }
+			if (!Text.TrimStartAndEnd().IsEmpty() && Local.Y + 2.f < Want)
+			{
+				// Who decides the height: the outermost ancestor that got less than it asked for.
+				FString By;
+				for (int32 i = Path.Num() - 2; i >= 0; --i)
+				{
+					const float A = Path[i]->GetTickSpaceGeometry().GetLocalSize().Y, D = Path[i]->GetDesiredSize().Y;
+					if (A + 1.f < D) { By = FString::Printf(TEXT("%s %.0f of %.0f"), *Path[i]->GetTypeAsString(), A, D); }
+					else if (!By.IsEmpty()) { By += FString::Printf(TEXT(" inside %s %.0f"), *Path[i]->GetTypeAsString(), A); break; }
+				}
+				SweepFind(Ctx, FString::Printf(TEXT("TEXT CUT    '%s' %.0f of %.0f px tall in %s; squeezed by %s"), *Text, Local.Y, Want, *Trail(Path), *By));
+			}
+		}
+		if ((Type == FName(TEXT("SVerticalBox")) || Type == FName(TEXT("SHorizontalBox"))) && Local.X > 1.f && Local.Y > 1.f)
+		{
+			const bool bVert = Type == FName(TEXT("SVerticalBox"));
+			FChildren* C = Root->GetChildren();
+			TOptional<FSlateRect> Prev;
+			TSharedPtr<SWidget> PrevW;
+			for (int32 i = 0; C && i < C->Num(); ++i)
+			{
+				TSharedRef<SWidget> K = C->GetChildAt(i);
+				if (!K->GetVisibility().IsVisible() || K == SNullWidget::NullWidget) { continue; }
+				const FSlateRect R = RectOf(K);
+				if (R.GetSize().X < 1.f || R.GetSize().Y < 1.f) { continue; }
+				if (Prev.IsSet())
+				{
+					const float Over = bVert ? Prev->Bottom - R.Top : Prev->Right - R.Left;
+					if (Over > 2.f)
+					{
+						const FSlateRect B = RectOf(Root);
+						SweepFind(Ctx, FString::Printf(TEXT("OVERLAP     %s over %s by %.0f px in %s at %.0f,%.0f %.0fx%.0f"), *PrevW->GetTypeAsString(), *K->GetTypeAsString(), Over, *Trail(Path),
+							B.Left, B.Top, B.GetSize().X, B.GetSize().Y));
+					}
+				}
+				Prev = R; PrevW = K;
+			}
+		}
+		if (Type == FName(TEXT("SDockTab"))) { ++GSweepTabs; }
+		if (Title && Type == FName(TEXT("SDockTab")))
+		{
+			const FSlateRect R = RectOf(Root);
+			if (GDev) { GSweepInfo.Add(FString::Printf(TEXT("%-28s   tab '%s' %.0f..%.0f"), *Ctx, *StaticCastSharedRef<SDockTab>(Root)->GetTabLabel().ToString(), R.Top, R.Bottom)); }
+			if (R.Top + 2.f < Title->Bottom && R.Bottom > Title->Top && R.Right > Title->Left && R.Left < Title->Right)
+			{
+				SweepFind(Ctx, FString::Printf(TEXT("UNDER TITLE tab '%s' top %.0f, title bar bottom %.0f"),
+					*StaticCastSharedRef<SDockTab>(Root)->GetTabLabel().ToString(), R.Top - Title->Top, Title->Bottom - Title->Top));
+			}
+		}
+		if (FChildren* C = Root->GetChildren())
+		{
+			for (int32 i = 0; i < C->Num(); ++i) { CheckTree(C->GetChildAt(i), Ctx, Path, Title, Depth + 1, Clip); }
+		}
+		Path.Pop();
+	}
+
+	static void CheckWindow(const TSharedRef<SWindow>& W, const FString& Ctx)
+	{
+		TSharedPtr<SWidget> TitleBar = FindByType(W, FName(TEXT("SWindowTitleBar")), 12, [](const TSharedRef<SWidget>& V) { return V->GetTickSpaceGeometry().GetLocalSize().Y > 0.f; });
+		const FSlateRect TitleRect = TitleBar.IsValid() && TitleBar->GetVisibility().IsVisible() ? RectOf(TitleBar.ToSharedRef()) : FSlateRect(0, 0, 0, 0);
+		// The title bar's own children (menus, the main window's tab row) legitimately sit in it.
+		TArray<TSharedRef<SWidget>> Path;
+		GSweepVisited = 0; GSweepTabs = 0;
+		FChildren* C = W->GetChildren();
+		for (int32 i = 0; C && i < C->Num(); ++i)
+		{
+			const FVector2D P = W->GetPositionInScreen();
+			const bool bClear = GClearedBars.ContainsByPredicate([&TitleBar](const TWeakPtr<SWidget>& B) { return B.Pin() == TitleBar; });
+			CheckTree(C->GetChildAt(i), Ctx, Path, (TitleRect.GetArea() > 0.f && !bClear) ? &TitleRect : nullptr, 0, FSlateRect(P, P + W->GetSizeInScreen()));
+		}
+		CheckContrast(W, Ctx);
+		GSweepInfo.Add(FString::Printf(TEXT("%-28s window '%s' %.0fx%.0f: %d widgets, %d tabs, title bar %s %.0f..%.0f"), *Ctx,
+			*W->GetTitle().ToString().Left(30), W->GetSizeInScreen().X, W->GetSizeInScreen().Y, GSweepVisited, GSweepTabs,
+			TitleBar.IsValid() ? TEXT("yes") : TEXT("no"), TitleRect.Top, TitleRect.Bottom));
+	}
+
+	static void SweepShot(const TSharedRef<SWindow>& W, const FSlateRect* Crop, const FString& Name)
+	{
+		TArray<FColor> Px; FIntVector Size;
+		if (!FSlateApplication::Get().TakeScreenshot(W, Px, Size) || Px.Num() == 0) { SweepFind(Name, TEXT("MISS shot")); return; }
+		const FVector2D Origin = W->GetPositionInScreen();
+		int32 X0 = 0, Y0 = 0, X1 = Size.X, Y1 = Size.Y;
+		if (Crop)
+		{
+			X0 = FMath::Clamp((int32)(Crop->Left - Origin.X) - 4, 0, Size.X); Y0 = FMath::Clamp((int32)(Crop->Top - Origin.Y) - 4, 0, Size.Y);
+			X1 = FMath::Clamp((int32)(Crop->Right - Origin.X) + 4, X0 + 1, Size.X); Y1 = FMath::Clamp((int32)(Crop->Bottom - Origin.Y) + 4, Y0 + 1, Size.Y);
+		}
+		TArray<FColor> Out;
+		Out.Reserve((X1 - X0) * (Y1 - Y0));
+		for (int32 y = Y0; y < Y1; ++y) { for (int32 x = X0; x < X1; ++x) { FColor C = Px[y * Size.X + x]; C.A = 255; Out.Add(C); } }
+		TArray64<uint8> Png;
+		FImageUtils::PNGCompressImageArray(X1 - X0, Y1 - Y0, TArrayView64<const FColor>(Out.GetData(), Out.Num()), Png);
+		FFileHelper::SaveArrayToFile(Png, *(SweepDir() / (Name + TEXT(".png"))));
+		++GSweep.Shots;
+	}
+
+	static void CollectTabs(const TSharedRef<FWorkspaceItem>& Item, TArray<FName>& Out)
+	{
+		if (TSharedPtr<FTabSpawnerEntry> S = Item->AsSpawnerEntry()) { Out.AddUnique(S->GetTabType()); }
+		for (const TSharedRef<FWorkspaceItem>& C : Item->GetChildItems()) { CollectTabs(C, Out); }
+	}
+
+	static TSharedPtr<FTabManager> LevelTabs()
+	{
+		return FModuleManager::Get().IsModuleLoaded(TEXT("LevelEditor"))
+			? FModuleManager::GetModuleChecked<FLevelEditorModule>(TEXT("LevelEditor")).GetLevelEditorTabManager() : nullptr;
+	}
+
+	static void SweepWrite(bool bDone)
+	{
+		IFileManager::Get().MakeDirectory(*SweepDir(), true);
+		TArray<FString> Out;
+		Out.Add(FString::Printf(TEXT("sweep %s (%s): %d/%d items, %d shots, %d findings"), bDone ? TEXT("done") : TEXT("running"),
+			GDark ? TEXT("dark") : TEXT("light"), GSweep.Index, GSweep.Items.Num(), GSweep.Shots, GSweep.Findings.Num()));
+		if (!bDone && GSweep.Items.IsValidIndex(GSweep.Index))
+		{
+			const FSweepItem& I = GSweep.Items[GSweep.Index];
+			Out.Add(FString::Printf(TEXT("current: %s"), I.Asset.IsEmpty() ? *I.Tab.ToString() : *I.Asset));
+		}
+		Out.Append(GSweep.Findings);
+		FFileHelper::SaveStringToFile(FString::Join(Out, TEXT("\n")), *(ReportDir() / (GDark ? TEXT("sweep_d.txt") : TEXT("sweep_l.txt"))));
+		FFileHelper::SaveStringToFile(FString::Join(GSweepInfo, TEXT("\n")), *(ReportDir() / TEXT("sweep_info.txt")));
+	}
+
+	static void SweepStep(int32 Phase);
+	static void SweepLater(int32 Phase, float Delay)
+	{
+		FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Phase](float) { SweepStep(Phase); return false; }), Delay);
+	}
+
+	static FString SweepName(const FSweepItem& I)
+	{
+		FString N = I.Asset.IsEmpty() ? I.Tab.ToString() : FPaths::GetBaseFilename(I.Asset);
+		N = N.Replace(TEXT(" "), TEXT("_")).Replace(TEXT("/"), TEXT("_")).Replace(TEXT(":"), TEXT("_"));
+		return FString::Printf(TEXT("%s_%03d_%s%s"), GDark ? TEXT("d") : TEXT("l"), GSweep.Index, *N, I.bFloat ? TEXT("_float") : TEXT(""));
+	}
+
+	// Phase 0: open the item. Phase 1: shoot and check every window, close it, next item.
+	static void SweepStep(int32 Phase)
+	{
+		TSharedPtr<FTabManager> TM = LevelTabs();
+		if (!TM.IsValid()) { return; }
+		if (!GSweep.Items.IsValidIndex(GSweep.Index))
+		{
+			SweepWrite(true);
+			Note(FString::Printf(TEXT("OK   sweep done: %d shots, %d findings"), GSweep.Shots, GSweep.Findings.Num()));
+			WriteReport();
+			return;
+		}
+		const FSweepItem& I = GSweep.Items[GSweep.Index];
+		if (Phase == 0)
+		{
+			SweepWrite(false);   // written before opening: if the editor hangs, sweep.txt names the culprit
+			GSweep.Current.Reset();
+			GSweep.Asset.Reset();
+			if (!I.Asset.IsEmpty())
+			{
+				UObject* Obj = FSoftObjectPath(I.Asset).TryLoad();
+				UAssetEditorSubsystem* AES = GEditor ? GEditor->GetEditorSubsystem<UAssetEditorSubsystem>() : nullptr;
+				if (Obj && AES && AES->OpenEditorForAsset(Obj)) { GSweep.Asset = Obj; }
+				else { SweepFind(I.Asset, TEXT("MISS could not open")); }
+			}
+			else if (I.bFloat)
+			{
+				if (TSharedPtr<SDockTab> Open = TM->FindExistingLiveTab(FTabId(I.Tab))) { Open->RequestCloseTab(); }
+				TSharedRef<FTabManager::FLayout> L = FTabManager::NewLayout(FName(TEXT("EasyThemeSweepFloat")))
+					->AddArea(FTabManager::NewArea(520.f, 640.f)
+						->SetWindow(FVector2D(300.0, 160.0), false)
+						->Split(FTabManager::NewStack()->AddTab(I.Tab, ETabState::OpenedTab)));
+				TM->RestoreFrom(L, FGlobalTabmanager::Get()->GetRootWindow(), false, EOutputCanBeNullptr::IfNoTabValid);
+				GSweep.Current = TM->FindExistingLiveTab(FTabId(I.Tab));
+			}
+			else
+			{
+				GSweep.Current = TM->TryInvokeTab(FTabId(I.Tab));
+				if (!GSweep.Current.IsValid()) { GSweep.Current = FGlobalTabmanager::Get()->TryInvokeTab(FTabId(I.Tab)); }
+			}
+			SweepLater(1, I.Asset.IsEmpty() ? 1.2f : 3.0f);
+			return;
+		}
+
+		const FString Name = SweepName(I);
+		TSharedPtr<SDockTab> Tab = GSweep.Current.Pin();
+		if (I.Asset.IsEmpty() && !Tab.IsValid())
+		{
+			GSweep.Findings.Add(FString::Printf(TEXT("%-28s skipped (cannot open here)"), *I.Tab.ToString()));
+		}
+		else
+		{
+			const TSharedPtr<SWindow> Main = FGlobalTabmanager::Get()->GetRootWindow();
+			for (const TSharedRef<SWindow>& W : AllWindows())
+			{
+				if (!W->IsVisible() || W->GetSizeInScreen().X < 60.f) { continue; }
+				CheckWindow(W, Name);
+			}
+			if (Tab.IsValid())
+			{
+				TSharedPtr<SWindow> W = Tab->GetParentWindow();
+				if (W.IsValid() && W != Main)
+				{
+					SweepShot(W.ToSharedRef(), nullptr, Name);   // floating: the whole window
+				}
+				else if (W.IsValid())
+				{
+					// Docked: crop to the panel (its tab stack: tabs + content).
+					TSharedPtr<SWidget> Stack = Tab;
+					while (Stack.IsValid() && Stack->GetType() != FName(TEXT("SDockingTabStack"))) { Stack = Stack->GetParentWidget(); }
+					const FSlateRect R = RectOf(Stack.IsValid() ? Stack.ToSharedRef() : Tab->GetContent());
+					SweepShot(W.ToSharedRef(), &R, Name);
+				}
+			}
+			else if (Main.IsValid())
+			{
+				SweepShot(Main.ToSharedRef(), nullptr, Name);   // asset editor: the main window
+			}
+		}
+		// Close what the sweep opened, so the layout stays as it was.
+		if (Tab.IsValid() && !GSweep.WasOpen.Contains(I.Tab)) { Tab->RequestCloseTab(); }
+		if (GSweep.Asset.IsValid())
+		{
+			if (UAssetEditorSubsystem* AES = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()) { AES->CloseAllEditorsForAsset(GSweep.Asset.Get()); }
+		}
+		++GSweep.Index;
+		SweepLater(0, 0.4f);
+	}
+
+	// Args: [from index] [-skip=TabA,TabB]. Panels from the Window menu (level editor and global
+	// structure), then the same few floating, then one asset per common type.
+	static void StartSweep(const TArray<FString>& Args)
+	{
+		TSharedPtr<FTabManager> TM = LevelTabs();
+		if (!TM.IsValid()) { return; }
+		GSweep = FSweepState();
+		GSweepInfo.Reset();
+		// Exact ids; the level editor itself and web pages (Fab, Bridge) are not ours to check,
+		// Asset Disk Size opens a blocking dialog.
+		TSet<FString> Skip = { TEXT("LevelEditor"), TEXT("HomeScreen"), TEXT("FabTab"), TEXT("Fab"), TEXT("QuixelBridge"), TEXT("Bridge"),
+			TEXT("WebBrowserTab"), TEXT("AssetDiskSize"), TEXT("AssetDiskSize2") };
+		int32 From = 0;
+		for (const FString& A : Args)
+		{
+			if (A.StartsWith(TEXT("-skip=")))
+			{
+				TArray<FString> S; A.Mid(6).ParseIntoArray(S, TEXT(","));
+				for (const FString& X : S) { Skip.Add(X); }
+			}
+			else if (A.IsNumeric()) { From = FCString::Atoi(*A); }
+		}
+		TArray<FName> Tabs;
+		CollectTabs(TM->GetLocalWorkspaceMenuRoot(), Tabs);
+		CollectTabs(WorkspaceMenu::GetMenuStructure().GetStructureRoot(), Tabs);
+		CollectTabs(WorkspaceMenu::GetMenuStructure().GetToolsStructureRoot(), Tabs);
+		// Level editor panels are listed by group, not as children of the menu tree: name them.
+		for (const TCHAR* T : { TEXT("LevelEditorSceneOutliner"), TEXT("LevelEditorSceneOutliner2"), TEXT("LevelEditorSelectionDetails"),
+			TEXT("LevelEditorSelectionDetails2"), TEXT("LevelEditorViewport_Clone1"), TEXT("LevelEditorLayerBrowser"), TEXT("LevelEditorDataLayerBrowser"),
+			TEXT("LevelEditorStatsViewer"), TEXT("LevelEditorHierarchicalLODOutliner"), TEXT("LevelEditorEnvironmentLightingViewer"),
+			TEXT("WorldBrowserPartitionEditor"), TEXT("WorldBrowserHierarchy"), TEXT("WorldBrowserDetails"), TEXT("WorldBrowserComposition"),
+			TEXT("WorldSettingsTab"), TEXT("PlacementBrowser"), TEXT("OutputLog"), TEXT("Sequencer"),
+			TEXT("ProjectSettings"), TEXT("EditorSettings"), TEXT("PluginsEditor") })
+		{
+			Tabs.AddUnique(FName(T));
+		}
+		for (const FName& T : Tabs)
+		{
+			const FString S = T.ToString();
+			if (Skip.Contains(S)) { continue; }
+			FSweepItem I; I.Tab = T; GSweep.Items.Add(I);
+			if (TM->FindExistingLiveTab(FTabId(T)).IsValid()) { GSweep.WasOpen.Add(T); }
+		}
+		for (const TCHAR* T : { TEXT("LevelEditorSceneOutliner"), TEXT("LevelEditorSelectionDetails"), TEXT("OutputLog"), TEXT("WorldSettingsTab") })
+		{
+			FSweepItem I; I.Tab = FName(T); I.bFloat = true; GSweep.Items.Add(I);
+		}
+		// One asset per common type: the test project's own, then the first one the engine ships.
+		IAssetRegistry& AR = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+		static const TCHAR* Classes[][2] = {
+			{ TEXT("/Script/Engine"), TEXT("StaticMesh") }, { TEXT("/Script/Engine"), TEXT("SkeletalMesh") },
+			{ TEXT("/Script/Engine"), TEXT("Material") }, { TEXT("/Script/Engine"), TEXT("MaterialInstanceConstant") },
+			{ TEXT("/Script/Engine"), TEXT("MaterialFunction") }, { TEXT("/Script/Engine"), TEXT("Texture2D") },
+			{ TEXT("/Script/Engine"), TEXT("Blueprint") }, { TEXT("/Script/Engine"), TEXT("DataTable") },
+			{ TEXT("/Script/Engine"), TEXT("CurveFloat") }, { TEXT("/Script/Engine"), TEXT("SoundWave") },
+			{ TEXT("/Script/Engine"), TEXT("PhysicsAsset") }, { TEXT("/Script/Engine"), TEXT("AnimSequence") },
+			{ TEXT("/Script/Engine"), TEXT("Font") }, { TEXT("/Script/Niagara"), TEXT("NiagaraSystem") },
+			{ TEXT("/Script/LevelSequence"), TEXT("LevelSequence") }, { TEXT("/Script/UMGEditor"), TEXT("WidgetBlueprint") } };
+		for (const auto& C : Classes)
+		{
+			TArray<FAssetData> Found;
+			AR.GetAssetsByClass(FTopLevelAssetPath(FName(C[0]), FName(C[1])), Found, false);
+			const FAssetData* Pick = nullptr;
+			for (const FAssetData& A : Found)
+			{
+				const FString P = A.PackageName.ToString();
+				// Engine "special" materials ask for confirmation in a dialog: never open them.
+				if (P.Contains(TEXT("EngineMaterials")) || P.Contains(TEXT("EngineDebugMaterials")) || P.Contains(TEXT("/Engine/Transient"))) { continue; }
+				if (!Pick || (P.StartsWith(TEXT("/Game/")) && !Pick->PackageName.ToString().StartsWith(TEXT("/Game/")))) { Pick = &A; }
+				if (P.StartsWith(TEXT("/Game/"))) { break; }
+			}
+			if (Pick) { FSweepItem I; I.Asset = Pick->GetSoftObjectPath().ToString(); GSweep.Items.Add(I); }
+		}
+		GSweep.Index = FMath::Clamp(From, 0, GSweep.Items.Num());
+		IFileManager::Get().MakeDirectory(*SweepDir(), true);
+		TArray<FString> List;
+		for (int32 i = 0; i < GSweep.Items.Num(); ++i)
+		{
+			const FSweepItem& I = GSweep.Items[i];
+			List.Add(FString::Printf(TEXT("%03d %s%s"), i, I.Asset.IsEmpty() ? *I.Tab.ToString() : *I.Asset, I.bFloat ? TEXT(" (floating)") : TEXT("")));
+		}
+		FFileHelper::SaveStringToFile(FString::Join(List, TEXT("\n")), *(ReportDir() / TEXT("sweep_items.txt")));
+		Note(FString::Printf(TEXT("OK   sweep: %d items from %d"), GSweep.Items.Num(), GSweep.Index));
+		SweepLater(0, 0.5f);
 	}
 
 	static void RegisterMenus()
@@ -2303,6 +2907,8 @@ public:
 		GConfig->GetBool(GConfigSection, TEXT("LightGraphs"), GLightGraphs, GEditorSettingsIni);
 		GConfig->GetBool(GConfigSection, TEXT("ToolbarInTabBar"), GToolbarInTitle, GEditorSettingsIni);
 		GDev = IFileManager::Get().FileExists(*(ReportDir() / TEXT("dev.flag")));
+		// Dev: light.flag starts the test editor in Light without touching the shared setting.
+		if (GDev && IFileManager::Get().FileExists(*(ReportDir() / TEXT("light.flag")))) { GDark = false; }
 		Note(FString::Printf(TEXT("EasyTheme %s - mode %s - resources %s"), *GVersion, GDark ? TEXT("dark") : TEXT("light"), *GResDir));
 
 		RegisterResources();
@@ -2322,8 +2928,16 @@ public:
 		Tickers.Add(FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([](float)
 		{
 			EasyTheme::EnsureToolbarInTitle();
+			if (EasyTheme::CountStyleSets() != EasyTheme::GStyleSetCount) { EasyTheme::FixNewStyleSets(); }
 			return true;
 		}), 0.5f));
+
+		// Floating panels' title bars: checked every frame, so a new window is fixed before it is seen.
+		Tickers.Add(FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([](float)
+		{
+			EasyTheme::FixFloatingTitleBars();
+			return true;
+		}), 0.0f));
 
 		// Put the user's graph colours back before Unreal writes its settings on exit.
 		PreExitHandle = FCoreDelegates::OnPreExit.AddLambda([]() { EasyTheme::ApplyGraphColors(false); EasyTheme::RunPendingUpdate(); });
@@ -2428,6 +3042,14 @@ public:
 						return false;
 					}), 1.0f);
 				})));
+			Cmds.Add(IConsoleManager::Get().RegisterConsoleCommand(
+				TEXT("EasyTheme.FloatTitle"),
+				TEXT("Easy Theme (dev): 0|1 - clear title bars of new floating panels"),
+				FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args) { EasyTheme::GFloatTitleFix = !(Args.Num() && Args[0] == TEXT("0")); })));
+			Cmds.Add(IConsoleManager::Get().RegisterConsoleCommand(
+				TEXT("EasyTheme.Sweep"),
+				TEXT("Easy Theme (dev): EasyTheme.Sweep [from] [-skip=TabA,TabB] - every Window-menu panel docked, some floating, one asset per type; checks + shots"),
+				FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args) { EasyTheme::StartSweep(Args); })));
 			Cmds.Add(IConsoleManager::Get().RegisterConsoleCommand(
 				TEXT("EasyTheme.Bug"),
 				TEXT("Easy Theme (dev): write the bug report files without opening the browser or Explorer"),
