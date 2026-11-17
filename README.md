@@ -2,7 +2,7 @@
 
 [Download](https://github.com/mapmodelers/ue5-theme-easy/releases/latest) · [Presentation page](https://mapmodelers.github.io/ue5-theme-easy/) · Free on Fab (coming) · MIT
 
-**Compact, readable editor theme. Three looks: Dark, Light, Compact.**
+**Compact, readable editor theme. Dark, Light, Compact, or your own colours.**
 
 ![Dark](docs/media/dark.png)
 
@@ -15,6 +15,7 @@
 ## Features
 
 - **Dark, Light, Compact.** Compact keeps Unreal's own colours with the compact layout.
+- **Your own colours.** Window > Easy Theme > Customize: 3 key colours and a levels bar, applied live; text always stays readable.
 - **More room.** Tabs and main toolbar on one row, thinner toolbars, square corners, slim title bar.
 - **Readable everywhere.** Text and colour fixes in every panel, including plugin editors and floating windows.
 - **Editor-only.** No engine changes, no effect on your game, no telemetry.
@@ -31,7 +32,8 @@ From source: copy `Plugin/EasyTheme` instead (Visual Studio required).
 
 | Where | What |
 |---|---|
-| Window > Easy Theme > Dark / Light / Compact | Switch look (Compact applies at next start) |
+| Window > Easy Theme > Dark / Light / Compact / Signal | Switch look (Compact and coloured looks apply at next start when coming from Dark or Light) |
+| Window > Easy Theme > Customize... | Make your own look: Base, Accent, Text, levels; Save As / Rename / Delete |
 | Window > Easy Theme > Light Graphs | Light graph canvas in Light |
 | Window > Easy Theme > Use 3-Pane Layout | Viewport, Content Browser below, Outliner over Details |
 | Window > Easy Theme > Show Home Tab | Hidden by default |

@@ -25,6 +25,7 @@
 #include "Brushes/SlateColorBrush.h"
 #include "Brushes/SlateNoResource.h"
 #include "Brushes/SlateRoundedBoxBrush.h"
+#include "Brushes/SlateDynamicImageBrush.h"
 #include "Fonts/CompositeFont.h"
 #include "Fonts/SlateFontInfo.h"
 #include "Framework/Application/SlateApplication.h"
@@ -84,6 +85,14 @@
 #include "WorkspaceMenuStructureModule.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Widgets/Text/STextBlock.h"
+#include "Widgets/SLeafWidget.h"
+#include "Widgets/Input/SComboBox.h"
+#include "Widgets/Input/SButton.h"
+#include "Widgets/Input/SEditableTextBox.h"
+#include "Widgets/Colors/SColorBlock.h"
+#include "Widgets/Colors/SColorPicker.h"
+#include "Rendering/DrawElements.h"
+#include "InputCoreTypes.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Views/STableViewBase.h"
 #include "IContentBrowserSingleton.h"
@@ -114,6 +123,36 @@ namespace EasyTheme
 	// Compact look (Window > Easy Theme > Compact): Unreal's own colours with the compact layout,
 	// square corners, font and fixes. Applied at start-up (switching asks for a restart).
 	static bool GCompact = false;
+	// Key-colour looks: the Compact look with Unreal's palette rebuilt from key colours, in memory only
+	// (Unreal's theme files are never written). An empty Base or Text keeps Unreal's greys.
+	// Built-in ones first, then the user's (Customize panel, saved in the [EasyTheme.Themes] section).
+	struct FKeyTheme
+	{
+		FString Name;
+		FLinearColor Base = FLinearColor::Gray, Accent = FLinearColor::Gray, Text = FLinearColor::Gray;
+		float Shadows = 1.f;          // darker greys: 1 = Unreal's ratios, more = deeper
+		bool bUnrealGreys = true;     // greys untouched (Base/Text ignored)
+		bool bBuiltIn = false;
+		FString Tip;
+	};
+	static TArray<FKeyTheme> GKeyThemes;
+	static int32 GKey = INDEX_NONE;   // GKeyThemes index while a key-colour look is on
+	static FKeyTheme GLive;           // the look on screen: GKeyThemes[GKey], plus unsaved edits
+	static bool GLiveDirty = false;
+	static int32 KeyThemeIndex(const FString& Look)
+	{
+		for (int32 i = 0; i < GKeyThemes.Num(); ++i) { if (Look == GKeyThemes[i].Name) { return i; } }
+		return INDEX_NONE;
+	}
+	static void SelectKey(int32 Key)
+	{
+		GKey = Key;
+		GLiveDirty = false;
+		if (GKeyThemes.IsValidIndex(Key)) { GLive = GKeyThemes[Key]; }
+	}
+	static void LoadKeyThemes();
+	static void OpenCustomize();
+	static FString LookName();
 	static bool GHideHome = true;   // option "Show Home Tab" off: Unreal's Home screen tab is not created
 	static const TCHAR* GHomeCVar = TEXT("HomeScreen.EnableHomeScreen");
 	static void SaveHomeSetting();
@@ -295,9 +334,192 @@ namespace EasyTheme
 	static TArray<bool> GPaletteSet;
 	static int32 GSentinel = INDEX_NONE;
 
+	static float Luma(const FLinearColor& C) { return 0.2126f * C.R + 0.7152f * C.G + 0.0722f * C.B; }
+	static float Contrast(const FLinearColor& A, const FLinearColor& B)
+	{
+		const float LA = Luma(A) + 0.05f, LB = Luma(B) + 0.05f;
+		return LA > LB ? LA / LB : LB / LA;
+	}
+	static FLinearColor Scaled(const FLinearColor& C, float K)
+	{
+		return FLinearColor(FMath::Min(C.R * K, 1.f), FMath::Min(C.G * K, 1.f), FMath::Min(C.B * K, 1.f), C.A);
+	}
+	// Same hue, darkened until it holds the text at 4.5:1.
+	static FLinearColor ForText(const FLinearColor& C, const FLinearColor& Text)
+	{
+		FLinearColor O = C;
+		for (int32 i = 0; i < 80 && Contrast(O, Text) < 4.5f; ++i) { O = Scaled(O, 0.94f); }
+		return O;
+	}
+	static FString HexOf(const FLinearColor& C) { return C.ToFColor(true).ToHex().Left(6); }
+
+	// Active window title bar of the key-colour looks: a gradient from the accent fill (left) to
+	// Unreal's title colour (right), like the blue one of the Dark look. Transparent = Unreal's back.
+	static TSharedPtr<FSlateDynamicImageBrush> GKeyTitle;
+	static TOptional<FSlateBrush> GOrigTitleOn, GOrigTitleFlash, GOrigTitleOff, GOrigTitleRow;
+	static bool GTitleTestInactive = false;   // dev: EasyTheme.TitleInactive 1 also paints inactive windows, for screenshots
+	static void KeyTitleBar(const FLinearColor& From, const FLinearColor& To)
+	{
+		const ISlateStyle* App = &FAppStyle::Get();
+		if (!App->HasWidgetStyle<FWindowStyle>(FName(TEXT("Window")))) { Note(TEXT("MISS style Window")); return; }
+		FWindowStyle& W = *const_cast<FWindowStyle*>(&App->GetWidgetStyle<FWindowStyle>(FName(TEXT("Window"))));
+		// The menu-bar row paints Brushes.Title over the window's title brush: cleared while the gradient shows.
+		FSlateBrush* Row = const_cast<FSlateBrush*>(App->GetOptionalBrush(FName(TEXT("Brushes.Title")), nullptr, nullptr));
+		if (!GOrigTitleOn.IsSet())
+		{
+			GOrigTitleOn = W.ActiveTitleBrush; GOrigTitleFlash = W.FlashTitleBrush; GOrigTitleOff = W.InactiveTitleBrush;
+			if (Row) { GOrigTitleRow = *Row; }
+		}
+		if (From.A <= 0.f)
+		{
+			W.ActiveTitleBrush = GOrigTitleOn.GetValue(); W.FlashTitleBrush = GOrigTitleFlash.GetValue(); W.InactiveTitleBrush = GOrigTitleOff.GetValue();
+			if (Row && GOrigTitleRow.IsSet()) { *Row = GOrigTitleRow.GetValue(); }
+			return;
+		}
+		if (Row) { *Row = FSlateNoResource(); }
+		W.InactiveTitleBrush = GOrigTitleRow.IsSet() ? GOrigTitleRow.GetValue() : GOrigTitleOff.GetValue();   // inactive: Unreal's plain title colour
+		const FName Name(*FString::Printf(TEXT("EasyThemeTitle_%s_%s"), *HexOf(From), *HexOf(To)));
+		if (GKeyTitle.IsValid() && GKeyTitle->GetResourceName() == Name)
+		{
+			W.ActiveTitleBrush = *GKeyTitle; W.FlashTitleBrush = *GKeyTitle;
+			if (GTitleTestInactive) { W.InactiveTitleBrush = *GKeyTitle; }
+			return;
+		}
+		const FColor A = From.ToFColor(true), B = To.ToFColor(true);
+		const int32 Wd = 256, Ht = 2;
+		TArray<uint8> Px; Px.SetNumUninitialized(Wd * Ht * 4);
+		for (int32 y = 0; y < Ht; ++y)
+		{
+			for (int32 x = 0; x < Wd; ++x)
+			{
+				const float T = x / float(Wd - 1);
+				uint8* P = &Px[(y * Wd + x) * 4];
+				P[0] = (uint8)FMath::RoundToInt(FMath::Lerp((float)A.B, (float)B.B, T));
+				P[1] = (uint8)FMath::RoundToInt(FMath::Lerp((float)A.G, (float)B.G, T));
+				P[2] = (uint8)FMath::RoundToInt(FMath::Lerp((float)A.R, (float)B.R, T));
+				P[3] = 255;
+			}
+		}
+		TSharedPtr<FSlateDynamicImageBrush> New = FSlateDynamicImageBrush::CreateWithImageData(Name, FVector2D(Wd, Ht), Px);
+		if (!New.IsValid()) { Note(TEXT("MISS title gradient: no dynamic image")); return; }
+		GKeyTitle = New;   // keeps the texture alive
+		W.ActiveTitleBrush = *GKeyTitle; W.FlashTitleBrush = *GKeyTitle;
+		if (GTitleTestInactive) { W.InactiveTitleBrush = *GKeyTitle; }
+		Note(FString::Printf(TEXT("OK   title bar gradient #%s -> #%s"), *HexOf(From), *HexOf(To)));
+	}
+
+	// What the live look ended up with (shown and edited by the Customize panel).
+	static FLinearColor GLiveBaseEff = FLinearColor::Gray, GLiveTextEff = FLinearColor::White, GLiveShadowEff = FLinearColor::Black;
+	static float GLiveContrast = 0.f;
+	static bool GLiveClamped = false;
+	static float GRefPanel = 0.f, GRefBg = 0.f;   // Unreal's Panel and Background luminance
+
+	// Compact family: Unreal's colours, or a key-colour look built on them. Plain Compact never
+	// touches the palette unless a key-colour look was on in this session (then it is put back).
+	static void ApplyKeyColors(bool bVerbose)
+	{
+		if (GKey == INDEX_NONE && GDefaults.Num() == 0) { return; }
+		int32 Dim = 0; UEnum* E = nullptr;
+		FLinearColor* Arr = ColorArray(Dim, E);
+		if (!Arr) { return; }
+		if (GDefaults.Num() == 0) { GDefaults = TArray<FLinearColor>(Arr, Dim); }
+		for (int32 i = 0; i < Dim && i < GDefaults.Num(); ++i) { Arr[i] = GDefaults[i]; }
+		GPalette = GDefaults;
+		GPaletteSet.Init(false, Dim);
+		GSentinel = INDEX_NONE;
+		if (GKey == INDEX_NONE) { KeyTitleBar(FLinearColor::Transparent, FLinearColor::Transparent); if (bVerbose) { Note(TEXT("OK   compact: Unreal colours restored")); } return; }
+
+		const FKeyTheme& K = GLive;
+		auto Slot = [&](const TCHAR* N) { const int32 V = ColorIndex(E, N); return (V >= 0 && V < Dim) ? V : INDEX_NONE; };
+		auto Set = [&](const TCHAR* N, const FLinearColor& C)
+		{
+			const int32 V = Slot(N);
+			if (V == INDEX_NONE) { if (bVerbose) { Note(FString::Printf(TEXT("MISS colour %s"), N)); ++GMiss; } return; }
+			Arr[V] = C; GPalette[V] = C; GPaletteSet[V] = true;
+		};
+		auto Def = [&](const TCHAR* N) { const int32 V = Slot(N); return V != INDEX_NONE ? GDefaults[V] : FLinearColor::Gray; };
+
+		// Greys: Unreal's ramp re-mapped so Panel lands on Base and Foreground on Text, tinted like Base;
+		// the darker greys follow Shadows. Text is then kept at 4.5:1 or more on every background.
+		const int32 Fg = Slot(TEXT("Foreground"));
+		const float P0 = Luma(Def(TEXT("Panel"))), T0 = Luma(Def(TEXT("Foreground")));
+		GRefPanel = P0; GRefBg = Luma(Def(TEXT("Background")));
+		auto MinTextContrast = [&]()
+		{
+			float M = 99.f;
+			if (Fg == INDEX_NONE) { return M; }
+			for (const TCHAR* N : { TEXT("Background"), TEXT("Recessed"), TEXT("Panel"), TEXT("Header"), TEXT("Input"), TEXT("Dropdown") })
+			{
+				const int32 V = Slot(N);
+				if (V != INDEX_NONE) { M = FMath::Min(M, Contrast(Arr[V], Arr[Fg])); }
+			}
+			return M;
+		};
+		GLiveClamped = false;
+		if (!K.bUnrealGreys && P0 > 0.f && T0 > P0)
+		{
+			const FLinearColor Base = K.Base;
+			const float P1 = FMath::Max(Luma(Base), 0.0005f);
+			auto MapGreys = [&](const FLinearColor& Text)
+			{
+				const float T1 = Luma(Text);
+				for (int32 i = 0; i < Dim; ++i)
+				{
+					const FLinearColor D = GDefaults[i];
+					if (D.A < 0.99f || FMath::Max3(D.R, D.G, D.B) - FMath::Min3(D.R, D.G, D.B) > 0.02f) { continue; }   // greys only
+					const float L = Luma(D);
+					if (L > T0 + 0.001f) { continue; }
+					const float NL = L <= P0 ? P1 * FMath::Pow(L / P0, K.Shadows) : P1 + (L - P0) * (T1 - P1) / (T0 - P0);
+					const FLinearColor Tint = L <= P0 ? Base : FMath::Lerp(Base, Text, (L - P0) / (T0 - P0));
+					const float TL = FMath::Max(Luma(Tint), 0.0005f);
+					Arr[i] = Scaled(FLinearColor(Tint.R, Tint.G, Tint.B, 1.f), NL / TL);
+					GPalette[i] = Arr[i]; GPaletteSet[i] = true;
+				}
+			};
+			const bool bDarkLook = Luma(K.Base) <= Luma(K.Text);
+			FLinearColor Text = K.Text;
+			for (int32 Try = 0; Try < 40; ++Try)
+			{
+				MapGreys(Text);
+				if (MinTextContrast() >= 4.5f) { break; }
+				GLiveClamped = true;
+				Text = FMath::Lerp(Text, bDarkLook ? FLinearColor::White : FLinearColor::Black, 0.15f);
+			}
+		}
+		GLiveContrast = MinTextContrast();
+		GLiveBaseEff = Slot(TEXT("Panel")) != INDEX_NONE ? Arr[Slot(TEXT("Panel"))] : K.Base;
+		GLiveTextEff = Fg != INDEX_NONE ? Arr[Fg] : K.Text;
+		GLiveShadowEff = Slot(TEXT("Background")) != INDEX_NONE ? Arr[Slot(TEXT("Background"))] : FLinearColor::Black;
+
+		// Accent: fills that carry text are darkened to 4.5:1 with the text colour.
+		const FLinearColor Text = Fg != INDEX_NONE ? Arr[Fg] : FLinearColor(0.5f, 0.5f, 0.5f);
+		const FLinearColor Accent = K.Accent;
+		const FLinearColor Fill = ForText(Accent, Text);
+		const FLinearColor Hot = Contrast(Scaled(Fill, 1.15f), Text) >= 4.0f ? Scaled(Fill, 1.15f) : Fill;
+		const int32 Pn = Slot(TEXT("Panel"));
+		const FLinearColor Panel = Pn != INDEX_NONE ? Arr[Pn] : FLinearColor(0.02f, 0.02f, 0.02f);
+		Set(TEXT("Primary"), Fill);
+		Set(TEXT("PrimaryHover"), Hot);
+		Set(TEXT("PrimaryPress"), Scaled(Fill, 0.8f));
+		Set(TEXT("Select"), Fill);
+		Set(TEXT("SelectHover"), Hot);
+		Set(TEXT("Highlight"), Fill);
+		Set(TEXT("SelectInactive"), FMath::Lerp(Fill, Panel, 0.5f));
+		Set(TEXT("SelectParent"), FMath::Lerp(Fill, Panel, 0.75f));
+		GSentinel = Slot(TEXT("Primary"));
+		const int32 Ti = Slot(TEXT("Title"));
+		KeyTitleBar(Fill, Ti != INDEX_NONE ? Arr[Ti] : FLinearColor(0.008f, 0.008f, 0.008f));
+		if (bVerbose)
+		{
+			Note(FString::Printf(TEXT("OK   look %s: accent #%s, fills #%s (%.1f:1 with text #%s), hover #%s (%.1f:1), base #%s, text on backgrounds %.1f:1%s"), *K.Name,
+				*HexOf(Accent), *HexOf(Fill), Contrast(Fill, Text), *HexOf(Text), *HexOf(Hot), Contrast(Hot, Text), *HexOf(GLiveBaseEff), GLiveContrast,
+				GLiveClamped ? TEXT(" (text adjusted)") : TEXT("")));
+		}
+	}
+
 	static void ApplyColors(bool bVerbose)
 	{
-		if (GCompact) { return; }   // Unreal's own colours
+		if (GCompact) { ApplyKeyColors(bVerbose); return; }   // Unreal's own colours, or a key-colour look
 		int32 Dim = 0; UEnum* E = nullptr;
 		FLinearColor* Arr = ColorArray(Dim, E);
 		if (!Arr) { return; }
@@ -1434,7 +1656,7 @@ namespace EasyTheme
 		const FString Dir = ReportDir();
 		IFileManager::Get().MakeDirectory(*Dir, true);
 		TArray<FString> Out;
-		Out.Add(FString::Printf(TEXT("EasyTheme report - mode %s - misses: %d"), GCompact ? TEXT("compact") : GDark ? TEXT("dark") : TEXT("light"), GMiss));
+		Out.Add(FString::Printf(TEXT("EasyTheme report - mode %s - misses: %d"), *LookName().ToLower(), GMiss));
 		Out.Append(GReport);
 		FFileHelper::SaveStringToFile(FString::Join(Out, TEXT("\n")), *(Dir / TEXT("report.txt")));
 	}
@@ -1755,6 +1977,10 @@ namespace EasyTheme
 			ApplyColors(true);
 			ScanRemaps();
 			ApplyRemaps();
+		}
+		else if (GKey != INDEX_NONE)
+		{
+			ApplyColors(true);   // key-colour look: before the first frame, as some widgets keep the colour they were built with
 		}
 		ApplyStyles();
 		ApplyFont();
@@ -2156,7 +2382,7 @@ namespace EasyTheme
 		const FString Info = FString::Printf(
 			TEXT("Easy Theme %s\nUnreal Engine %s\nOS %s\nMode %s, Light Graphs %s, Toolbar in Tab Bar %s\nWindow %.0fx%.0f, DPI scale %.2f\n"),
 			*GVersion, *FEngineVersion::Current().ToString(EVersionComponent::Patch), *FPlatformMisc::GetOSVersion(),
-			GCompact ? TEXT("Compact") : GDark ? TEXT("Dark") : TEXT("Light"), GLightGraphs ? TEXT("on") : TEXT("off"), GToolbarInTitle ? TEXT("on") : TEXT("off"),
+			*LookName(), GLightGraphs ? TEXT("on") : TEXT("off"), GToolbarInTitle ? TEXT("on") : TEXT("off"),
 			Px.X, Px.Y, FSlateApplication::Get().GetApplicationScale());
 		FFileHelper::SaveStringToFile(Info, *(Dir / TEXT("info.txt")));
 		Note(FString::Printf(TEXT("OK   bug report in %s"), *Dir));
@@ -2204,15 +2430,35 @@ namespace EasyTheme
 	{
 		const FString& Ini = GDev ? GEditorPerProjectIni : GEditorSettingsIni;
 		GConfig->SetString(GConfigSection, TEXT("Look"), *Look, Ini);
-		if (Look != TEXT("Compact")) { GConfig->SetBool(GConfigSection, TEXT("Dark"), Look == TEXT("Dark"), Ini); }
+		if (Look == TEXT("Dark") || Look == TEXT("Light")) { GConfig->SetBool(GConfigSection, TEXT("Dark"), Look == TEXT("Dark"), Ini); }
 		GConfig->Flush(false, Ini);
 	}
 
 	// Dark and Light switch live. Compact (Unreal's own colours) differs in brushes too, so going
 	// to or from it is saved and applied at the next start.
+	static FString LookName()
+	{
+		if (GCompact) { return GKeyThemes.IsValidIndex(GKey) ? GKeyThemes[GKey].Name : FString(TEXT("Compact")); }
+		return GDark ? TEXT("Dark") : TEXT("Light");
+	}
+
 	static void SetLook(const FString& Look)
 	{
-		const bool bToCompact = Look == TEXT("Compact");
+		const int32 Key = KeyThemeIndex(Look);
+		const bool bToCompact = Look == TEXT("Compact") || Key != INDEX_NONE;
+		// Compact and the key-colour looks share brushes: only the palette changes, live.
+		if (bToCompact && GCompact)
+		{
+			if (Key != GKey || GLiveDirty)
+			{
+				SelectKey(Key);
+				SaveLook(Look);
+				ApplyColors(true);
+				FSlateApplication::Get().InvalidateAllWidgets(false);
+				WriteReport();
+			}
+			return;
+		}
 		if (bToCompact == GCompact)
 		{
 			if (!bToCompact && (Look == TEXT("Dark")) != GDark) { SetMode(Look == TEXT("Dark"), true); }
@@ -2247,8 +2493,24 @@ namespace EasyTheme
 			FText::FromString(TEXT("Unreal's own colours with the compact layout, square corners and fixes. Applied when Unreal starts.")),
 			FSlateIcon(),
 			FUIAction(FExecuteAction::CreateLambda([]() { SetLook(TEXT("Compact")); }), FCanExecuteAction(),
-				FIsActionChecked::CreateLambda([]() { return GCompact; })),
+				FIsActionChecked::CreateLambda([]() { return GCompact && GKey == INDEX_NONE; })),
 			EUserInterfaceActionType::RadioButton);
+		for (int32 i = 0; i < GKeyThemes.Num(); ++i)
+		{
+			const FString Name = GKeyThemes[i].Name;
+			Look.AddMenuEntry(FName(*FString::Printf(TEXT("EasyThemeKey%d"), i)),
+				FText::FromString(Name),
+				FText::FromString(GKeyThemes[i].Tip),
+				FSlateIcon(),
+				FUIAction(FExecuteAction::CreateLambda([Name]() { SetLook(Name); }), FCanExecuteAction(),
+					FIsActionChecked::CreateLambda([Name]() { return GCompact && GKeyThemes.IsValidIndex(GKey) && GKeyThemes[GKey].Name == Name; })),
+				EUserInterfaceActionType::RadioButton);
+		}
+		Look.AddMenuEntry("EasyThemeCustomize",
+			FText::FromString(TEXT("Customize...")),
+			FText::FromString(TEXT("Make your own look from Compact: key colours, a levels bar for the greys, saved under your own name.")),
+			FSlateIcon(),
+			FUIAction(FExecuteAction::CreateLambda([]() { OpenCustomize(); })));
 		Look.AddMenuEntry("EasyThemeLightGraphs",
 			FText::FromString(TEXT("Light Graphs")),
 			FText::FromString(TEXT("Light mode: Blueprint and Material graphs on a light canvas. Your grid colours in Editor Preferences are kept and put back when this is off.")),
@@ -3325,6 +3587,482 @@ namespace EasyTheme
 		}
 
 	}
+	// ---------------------------------------------------------------- Customize panel
+	// Window > Easy Theme > Customize...: key colours (Base, Accent, Text), a levels bar for the greys,
+	// themes saved by name. Everything builds on Compact and applies live, in memory only.
+	static const FName GCustomizeTab(TEXT("EasyThemeCustomize"));
+	static const TCHAR* GThemeSection = TEXT("EasyTheme.Themes");
+	static FString GPanelMsg;
+	static TArray<TSharedPtr<FString>> GComboItems;
+	static TWeakPtr<SComboBox<TSharedPtr<FString>>> GCombo;
+	static bool GInvalidatePending = false;
+
+	static const FString& UserThemeIni() { return GDev ? GEditorPerProjectIni : GEditorSettingsIni; }
+
+	static FString ThemeToString(const FKeyTheme& T)
+	{
+		return FString::Printf(TEXT("%s,%s,%s,%.3f"), T.bUnrealGreys ? TEXT("-") : *HexOf(T.Base), *HexOf(T.Accent),
+			T.bUnrealGreys ? TEXT("-") : *HexOf(T.Text), T.Shadows);
+	}
+
+	static void LoadKeyThemes()
+	{
+		GKeyThemes.Reset();
+		FKeyTheme Signal;
+		Signal.Name = TEXT("Signal");
+		Signal.Accent = Hex(TEXT("00FF00"));
+		Signal.bBuiltIn = true;
+		Signal.Tip = TEXT("Compact with a green key colour (#00FF00); buttons and selections use a deeper green that keeps text readable.");
+		GKeyThemes.Add(Signal);
+		TArray<FString> Lines;
+		GConfig->GetSection(GThemeSection, Lines, UserThemeIni());
+		for (const FString& L : Lines)
+		{
+			FString Name, Value;
+			if (!L.Split(TEXT("="), &Name, &Value)) { continue; }
+			TArray<FString> P;
+			Value.ParseIntoArray(P, TEXT(","));
+			if (P.Num() < 4 || Name.IsEmpty() || KeyThemeIndex(Name) != INDEX_NONE) { continue; }
+			FKeyTheme T;
+			T.Name = Name;
+			T.bUnrealGreys = P[0] == TEXT("-") || P[2] == TEXT("-");
+			if (!T.bUnrealGreys) { T.Base = Hex(*P[0]); T.Text = Hex(*P[2]); }
+			T.Accent = Hex(*P[1]);
+			T.Shadows = FMath::Clamp(FCString::Atof(*P[3]), 0.3f, 3.f);
+			T.Tip = TEXT("Your theme (Customize...).");
+			GKeyThemes.Add(T);
+		}
+	}
+
+	static void SaveUserThemes()
+	{
+		const FString& Ini = UserThemeIni();
+		GConfig->EmptySection(GThemeSection, Ini);
+		for (const FKeyTheme& T : GKeyThemes)
+		{
+			if (!T.bBuiltIn) { GConfig->SetString(GThemeSection, *T.Name, *ThemeToString(T), Ini); }
+		}
+		GConfig->Flush(false, Ini);
+	}
+
+	static FString CleanName(const FString& In)
+	{
+		FString Out;
+		for (const TCHAR C : In) { if (FChar::IsAlnum(C) || C == TEXT(' ') || C == TEXT('-') || C == TEXT('_')) { Out.AppendChar(C); } }
+		return Out.TrimStartAndEnd().Left(32);
+	}
+
+	static bool NameTaken(const FString& N)
+	{
+		return N == TEXT("Dark") || N == TEXT("Light") || N == TEXT("Compact") || KeyThemeIndex(N) != INDEX_NONE;
+	}
+
+	static FLinearColor DefColor(const TCHAR* N)
+	{
+		int32 Dim = 0; UEnum* E = nullptr;
+		FLinearColor* Arr = ColorArray(Dim, E);
+		if (!Arr) { return FLinearColor::Gray; }
+		if (GDefaults.Num() == 0) { GDefaults = TArray<FLinearColor>(Arr, Dim); }
+		const int32 V = ColorIndex(E, N);
+		return GDefaults.IsValidIndex(V) ? GDefaults[V] : FLinearColor::Gray;
+	}
+
+	// sRGB value (HSV V) of a colour, and the same colour at another value.
+	static FLinearColor ToSRGB(const FLinearColor& Lin) { const FColor C = Lin.ToFColor(true); return FLinearColor(C.R / 255.f, C.G / 255.f, C.B / 255.f, 1.f); }
+	static FLinearColor FromSRGB(const FLinearColor& S)
+	{
+		return FLinearColor(FColor((uint8)FMath::RoundToInt(FMath::Clamp(S.R, 0.f, 1.f) * 255.f), (uint8)FMath::RoundToInt(FMath::Clamp(S.G, 0.f, 1.f) * 255.f),
+			(uint8)FMath::RoundToInt(FMath::Clamp(S.B, 0.f, 1.f) * 255.f)));
+	}
+	static float ValueOf(const FLinearColor& Lin) { const FLinearColor S = ToSRGB(Lin); return FMath::Max3(S.R, S.G, S.B); }
+	static FLinearColor WithValue(const FLinearColor& Lin, float V)
+	{
+		FLinearColor H = ToSRGB(Lin).LinearRGBToHSV();
+		H.B = FMath::Clamp(V, 0.f, 1.f);
+		return FromSRGB(H.HSVToLinearRGB());
+	}
+
+	static bool CanEditLook() { return GCompact && GKeyThemes.IsValidIndex(GKey); }
+
+	// Edits apply at once; the editor is redrawn at most every 50 ms.
+	static void LiveEdit()
+	{
+		GLiveDirty = true;
+		GPanelMsg.Reset();
+		ApplyColors(false);
+		if (GInvalidatePending) { return; }
+		GInvalidatePending = true;
+		FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([](float)
+		{
+			GInvalidatePending = false;
+			if (FSlateApplication::IsInitialized()) { FSlateApplication::Get().InvalidateAllWidgets(false); }
+			return false;
+		}), 0.05f);
+	}
+
+	// A theme that kept Unreal's greys starts editing them from what is on screen.
+	static void BeginGreyEdit()
+	{
+		if (!GLive.bUnrealGreys) { return; }
+		GLive.bUnrealGreys = false;
+		GLive.Base = GLiveBaseEff;
+		GLive.Text = GLiveTextEff;
+		GLive.Shadows = 1.f;
+	}
+
+	static FLinearColor KeyValue(int32 Which)
+	{
+		return Which == 0 ? GLiveBaseEff : Which == 1 ? GLive.Accent : GLiveTextEff;
+	}
+
+	static void SetKey(int32 Which, const FLinearColor& C)
+	{
+		if (!CanEditLook()) { return; }
+		if (Which == 1) { GLive.Accent = FLinearColor(C.R, C.G, C.B, 1.f); }
+		else
+		{
+			BeginGreyEdit();
+			(Which == 0 ? GLive.Base : GLive.Text) = FLinearColor(C.R, C.G, C.B, 1.f);
+		}
+		LiveEdit();
+	}
+
+	static void PickColour(int32 Which)
+	{
+		if (!CanEditLook()) { return; }
+		const FLinearColor Before = KeyValue(Which);
+		const FKeyTheme Undo = GLive;
+		const bool bUndoDirty = GLiveDirty;
+		FColorPickerArgs Args;
+		Args.InitialColor = Before;
+		Args.bUseAlpha = false;
+		Args.bOnlyRefreshOnMouseUp = false;
+		Args.bOnlyRefreshOnOk = false;
+		Args.OnColorCommitted = FOnLinearColorValueChanged::CreateLambda([Which](FLinearColor C) { SetKey(Which, C); });
+		Args.OnColorPickerCancelled = FOnColorPickerCancelled::CreateLambda([Undo, bUndoDirty](FLinearColor)
+		{
+			GLive = Undo;
+			LiveEdit();
+			GLiveDirty = bUndoDirty;
+		});
+		OpenColorPicker(Args);
+	}
+
+	// Levels handles: 0 darkest grey (Background), 1 Base, 2 Text; positions are sRGB values.
+	static void HandleValues(float V[3])
+	{
+		V[0] = ValueOf(GLiveShadowEff); V[1] = ValueOf(GLiveBaseEff); V[2] = ValueOf(GLiveTextEff);
+	}
+
+	static void SetHandle(int32 K, float V)
+	{
+		if (!CanEditLook()) { return; }
+		BeginGreyEdit();
+		if (K == 1) { GLive.Base = WithValue(GLive.Base, FMath::Max(V, 0.02f)); }
+		else if (K == 2) { GLive.Text = WithValue(GLive.Text, V); }
+		else
+		{
+			const float Lt = FMath::Max(Luma(WithValue(GLive.Base, V)), 0.0002f);
+			const float P1 = FMath::Max(Luma(GLive.Base), 0.0005f);
+			if (GRefBg > 0.f && GRefPanel > GRefBg) { GLive.Shadows = FMath::Clamp(FMath::Loge(Lt / P1) / FMath::Loge(GRefBg / GRefPanel), 0.3f, 3.f); }
+		}
+		LiveEdit();
+	}
+
+	class SEasyLevels : public SLeafWidget
+	{
+	public:
+		SLATE_BEGIN_ARGS(SEasyLevels) {}
+		SLATE_END_ARGS()
+
+		void Construct(const FArguments&) {}
+
+		virtual FVector2D ComputeDesiredSize(float) const override { return FVector2D(300.f, 34.f); }
+
+		virtual int32 OnPaint(const FPaintArgs& Args, const FGeometry& G, const FSlateRect& Clip, FSlateWindowElementList& Out,
+			int32 Layer, const FWidgetStyle& Style, bool bParentEnabled) const override
+		{
+			const FVector2D Size = G.GetLocalSize();
+			const float BarH = FMath::Max(Size.Y - 12.f, 8.f);
+			const bool bOn = bParentEnabled && IsEnabled();
+			float V[3]; HandleValues(V);
+			const FLinearColor Col[3] = { GLiveShadowEff, GLiveBaseEff, GLiveTextEff };
+
+			// The ramp as a gradient map: black, the three greys at their values, white.
+			TArray<TPair<float, FLinearColor>> P = { { 0.f, FLinearColor::Black }, { 1.f, FLinearColor::White } };
+			for (int32 k = 0; k < 3; ++k) { P.Add(TPair<float, FLinearColor>(FMath::Clamp(V[k], 0.f, 1.f), Col[k])); }
+			P.Sort([](const TPair<float, FLinearColor>& A, const TPair<float, FLinearColor>& B) { return A.Key < B.Key; });
+			TArray<FSlateGradientStop> Stops;
+			for (const TPair<float, FLinearColor>& S : P) { Stops.Add(FSlateGradientStop(FVector2D(S.Key * Size.X, 0.0), S.Value)); }
+			FSlateDrawElement::MakeGradient(Out, Layer, G.ToPaintGeometry(FVector2D(Size.X, BarH), FSlateLayoutTransform()), Stops, Orient_Vertical,
+				bOn ? ESlateDrawEffect::None : ESlateDrawEffect::DisabledEffect);
+
+			const FSlateBrush* White = FAppStyle::GetBrush(TEXT("WhiteBrush"));
+			for (int32 k = 0; k < 3; ++k)
+			{
+				const float X = FMath::Clamp(V[k], 0.f, 1.f) * (float)Size.X;
+				const FLinearColor Line = ValueOf(Col[k]) > 0.5f ? FLinearColor::Black : FLinearColor::White;
+				FSlateDrawElement::MakeBox(Out, Layer + 1, G.ToPaintGeometry(FVector2D(1.0, BarH), FSlateLayoutTransform(1.f, FVector2D(X - 0.5f, 0.0))), White, ESlateDrawEffect::None, Line);
+				FSlateDrawElement::MakeBox(Out, Layer + 1, G.ToPaintGeometry(FVector2D(9.0, 12.0), FSlateLayoutTransform(1.f, FVector2D(X - 4.5f, BarH))), White, ESlateDrawEffect::None, FLinearColor::Black);
+				FSlateDrawElement::MakeBox(Out, Layer + 2, G.ToPaintGeometry(FVector2D(7.0, 10.0), FSlateLayoutTransform(1.f, FVector2D(X - 3.5f, BarH + 1.f))), White, ESlateDrawEffect::None,
+					!bOn ? FLinearColor(0.3f, 0.3f, 0.3f) : k == Drag ? GLive.Accent : FLinearColor(0.85f, 0.85f, 0.85f));
+			}
+			return Layer + 3;
+		}
+
+		virtual FReply OnMouseButtonDown(const FGeometry& G, const FPointerEvent& E) override
+		{
+			if (E.GetEffectingButton() != EKeys::LeftMouseButton || !CanEditLook()) { return FReply::Unhandled(); }
+			const float X = G.AbsoluteToLocal(E.GetScreenSpacePosition()).X;
+			const float W = FMath::Max((float)G.GetLocalSize().X, 1.f);
+			float V[3]; HandleValues(V);
+			float Best = 12.f;
+			Drag = INDEX_NONE;
+			for (int32 k = 2; k >= 0; --k)   // Text first: it often sits at the end
+			{
+				const float D = FMath::Abs(V[k] * W - X);
+				if (D < Best) { Best = D; Drag = k; }
+			}
+			if (Drag == INDEX_NONE) { return FReply::Unhandled(); }
+			return FReply::Handled().CaptureMouse(SharedThis(this));
+		}
+
+		virtual FReply OnMouseMove(const FGeometry& G, const FPointerEvent& E) override
+		{
+			if (Drag == INDEX_NONE || !HasMouseCapture()) { return FReply::Unhandled(); }
+			const float W = FMath::Max((float)G.GetLocalSize().X, 1.f);
+			SetHandle(Drag, FMath::Clamp(G.AbsoluteToLocal(E.GetScreenSpacePosition()).X / W, 0.f, 1.f));
+			return FReply::Handled();
+		}
+
+		virtual FReply OnMouseButtonUp(const FGeometry& G, const FPointerEvent& E) override
+		{
+			if (Drag == INDEX_NONE) { return FReply::Unhandled(); }
+			Drag = INDEX_NONE;
+			return FReply::Handled().ReleaseMouseCapture();
+		}
+
+	private:
+		int32 Drag = INDEX_NONE;
+	};
+
+	static void SaveCurrent()
+	{
+		if (!CanEditLook() || GKeyThemes[GKey].bBuiltIn) { return; }
+		GKeyThemes[GKey] = GLive;
+		SaveUserThemes();
+		GLiveDirty = false;
+		GPanelMsg = FString::Printf(TEXT("Saved %s."), *GLive.Name);
+	}
+
+	static void SaveAs(const FString& Wanted)
+	{
+		if (!GCompact) { return; }
+		FString Name = CleanName(Wanted);
+		if (Name.IsEmpty())
+		{
+			const FString Stem = LookName() + TEXT(" copy");
+			Name = Stem;
+			for (int32 n = 2; NameTaken(Name) && n < 100; ++n) { Name = FString::Printf(TEXT("%s %d"), *Stem, n); }
+		}
+		if (NameTaken(Name)) { GPanelMsg = FString::Printf(TEXT("A look named %s already exists."), *Name); return; }
+		FKeyTheme T;
+		if (CanEditLook()) { T = GLive; }
+		else
+		{
+			// From plain Compact: Unreal's own colours as the starting point.
+			T.Accent = DefColor(TEXT("Primary"));
+			T.bUnrealGreys = true;
+		}
+		T.Name = Name;
+		T.bBuiltIn = false;
+		T.Tip = TEXT("Your theme (Customize...).");
+		GKeyThemes.Add(T);
+		SaveUserThemes();
+		SelectKey(GKeyThemes.Num() - 1);
+		SaveLook(Name);
+		ApplyColors(true);
+		FSlateApplication::Get().InvalidateAllWidgets(false);
+		GPanelMsg = FString::Printf(TEXT("Saved as %s."), *Name);
+	}
+
+	static void RenameCurrent(const FString& Wanted)
+	{
+		if (!CanEditLook() || GKeyThemes[GKey].bBuiltIn) { return; }
+		const FString Name = CleanName(Wanted);
+		if (Name.IsEmpty()) { GPanelMsg = TEXT("Type the new name first."); return; }
+		if (NameTaken(Name)) { GPanelMsg = FString::Printf(TEXT("A look named %s already exists."), *Name); return; }
+		GKeyThemes[GKey].Name = Name;
+		GLive.Name = Name;
+		SaveUserThemes();
+		SaveLook(Name);
+		GPanelMsg = FString::Printf(TEXT("Renamed to %s."), *Name);
+	}
+
+	static void DeleteCurrent()
+	{
+		if (!CanEditLook() || GKeyThemes[GKey].bBuiltIn) { return; }
+		const FString Name = GKeyThemes[GKey].Name;
+		if (!GNoDialog && FMessageDialog::Open(EAppMsgType::YesNo, FText::FromString(FString::Printf(TEXT("Delete the look %s?"), *Name))) != EAppReturnType::Yes) { return; }
+		GKeyThemes.RemoveAt(GKey);
+		SaveUserThemes();
+		SelectKey(INDEX_NONE);
+		SaveLook(TEXT("Compact"));
+		ApplyColors(true);
+		FSlateApplication::Get().InvalidateAllWidgets(false);
+		GPanelMsg = FString::Printf(TEXT("Deleted %s; back to Compact."), *Name);
+	}
+
+	static FText PanelStatus()
+	{
+		if (!GCompact) { return FText::FromString(TEXT("Your looks build on Compact. Choose Compact in Window > Easy Theme (applies after a restart), then come back here.")); }
+		FString S;
+		if (!CanEditLook()) { S = TEXT("Compact uses Unreal's own colours. Save As makes an editable copy, or pick a look above."); }
+		else
+		{
+			S = FString::Printf(TEXT("Text contrast %.1f:1%s."), GLiveContrast, GLiveClamped ? TEXT(", text lightened to stay readable") : TEXT(""));
+			if (GLiveDirty) { S += GKeyThemes[GKey].bBuiltIn ? TEXT(" Built-in look: Save As keeps your changes.") : TEXT(" Not saved yet."); }
+		}
+		if (!GPanelMsg.IsEmpty()) { S = GPanelMsg + TEXT(" ") + S; }
+		return FText::FromString(S);
+	}
+
+	static void RefillCombo()
+	{
+		GComboItems.Reset();
+		GComboItems.Add(MakeShared<FString>(TEXT("Compact")));
+		for (const FKeyTheme& T : GKeyThemes) { GComboItems.Add(MakeShared<FString>(T.Name)); }
+		if (TSharedPtr<SComboBox<TSharedPtr<FString>>> C = GCombo.Pin()) { C->RefreshOptions(); }
+	}
+
+	static TSharedRef<SWidget> Swatch(int32 Which, const TCHAR* Label)
+	{
+		return SNew(SVerticalBox)
+			+ SVerticalBox::Slot().AutoHeight()
+			[
+				SNew(STextBlock).Text(FText::FromString(Label))
+			]
+			+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f, 0.f, 0.f)
+			[
+				SNew(SBox).WidthOverride(72.f).HeightOverride(20.f)
+				.IsEnabled_Lambda([]() { return CanEditLook(); })
+				.ToolTipText(FText::FromString(Which == 0 ? TEXT("Panel colour; the other greys follow it.")
+					: Which == 1 ? TEXT("Buttons, selections, title bar. Fills are darkened as needed so text stays readable.")
+					: TEXT("Text colour. Kept at 4.5:1 or more on every background.")))
+				[
+					SNew(SColorBlock)
+					.Color_Lambda([Which]() { return KeyValue(Which); })
+					.OnMouseButtonDown_Lambda([Which](const FGeometry&, const FPointerEvent&) { PickColour(Which); return FReply::Handled(); })
+				]
+			];
+	}
+
+	static TSharedRef<SWidget> MakeCustomizePanel()
+	{
+		RefillCombo();
+		TSharedPtr<SEditableTextBox> NameBox;
+		TSharedRef<SWidget> Panel =
+			SNew(SBox).Padding(8.f)
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot().AutoHeight()
+				[
+					SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 8.f, 0.f)
+					[
+						SNew(STextBlock).Text(FText::FromString(TEXT("Look")))
+					]
+					+ SHorizontalBox::Slot().FillWidth(1.f)
+					[
+						SAssignNew(GCombo, SComboBox<TSharedPtr<FString>>)
+						.OptionsSource(&GComboItems)
+						.IsEnabled_Lambda([]() { return GCompact; })
+						.OnComboBoxOpening_Lambda([]() { RefillCombo(); })
+						.OnGenerateWidget_Lambda([](TSharedPtr<FString> S) { return SNew(STextBlock).Text(FText::FromString(S.IsValid() ? *S : FString())); })
+						.OnSelectionChanged_Lambda([](TSharedPtr<FString> S, ESelectInfo::Type Info)
+						{
+							if (S.IsValid() && Info != ESelectInfo::Direct) { GPanelMsg.Reset(); SetLook(*S); }
+						})
+						[
+							SNew(STextBlock).Text_Lambda([]() { return FText::FromString(LookName() + (GLiveDirty ? TEXT(" *") : TEXT(""))); })
+						]
+					]
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 6.f, 0.f, 0.f)
+				[
+					SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 4.f, 0.f)
+					[
+						SAssignNew(NameBox, SEditableTextBox)
+						.HintText(FText::FromString(TEXT("Name (Save As, Rename)")))
+						.IsEnabled_Lambda([]() { return GCompact; })
+					]
+					+ SHorizontalBox::Slot().AutoWidth().Padding(2.f, 0.f)
+					[
+						SNew(SButton).Text(FText::FromString(TEXT("Save")))
+						.IsEnabled_Lambda([]() { return CanEditLook() && !GKeyThemes[GKey].bBuiltIn && GLiveDirty; })
+						.OnClicked_Lambda([]() { SaveCurrent(); return FReply::Handled(); })
+					]
+					+ SHorizontalBox::Slot().AutoWidth().Padding(2.f, 0.f)
+					[
+						SNew(SButton).Text(FText::FromString(TEXT("Save As")))
+						.IsEnabled_Lambda([]() { return GCompact; })
+						.OnClicked_Lambda([NameBox]() { SaveAs(NameBox->GetText().ToString()); NameBox->SetText(FText::GetEmpty()); return FReply::Handled(); })
+					]
+					+ SHorizontalBox::Slot().AutoWidth().Padding(2.f, 0.f)
+					[
+						SNew(SButton).Text(FText::FromString(TEXT("Rename")))
+						.IsEnabled_Lambda([]() { return CanEditLook() && !GKeyThemes[GKey].bBuiltIn; })
+						.OnClicked_Lambda([NameBox]() { RenameCurrent(NameBox->GetText().ToString()); NameBox->SetText(FText::GetEmpty()); return FReply::Handled(); })
+					]
+					+ SHorizontalBox::Slot().AutoWidth().Padding(2.f, 0.f, 0.f, 0.f)
+					[
+						SNew(SButton).Text(FText::FromString(TEXT("Delete")))
+						.IsEnabled_Lambda([]() { return CanEditLook() && !GKeyThemes[GKey].bBuiltIn; })
+						.OnClicked_Lambda([]() { DeleteCurrent(); return FReply::Handled(); })
+					]
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 12.f, 0.f, 0.f)
+				[
+					SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 12.f, 0.f) [ Swatch(0, TEXT("Base")) ]
+					+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 12.f, 0.f) [ Swatch(1, TEXT("Accent")) ]
+					+ SHorizontalBox::Slot().AutoWidth() [ Swatch(2, TEXT("Text")) ]
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 12.f, 0.f, 0.f)
+				[
+					SNew(STextBlock).Text(FText::FromString(TEXT("Levels: drag Shadows, Base and Text along the bar")))
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)
+				[
+					SNew(SEasyLevels)
+					.IsEnabled_Lambda([]() { return CanEditLook(); })
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 12.f, 0.f, 0.f)
+				[
+					SNew(STextBlock)
+					.AutoWrapText(true)
+					.Text_Lambda([]() { return PanelStatus(); })
+				]
+			];
+		return Panel;
+	}
+
+	static TSharedRef<SDockTab> SpawnCustomize(const FSpawnTabArgs&)
+	{
+		return SNew(SDockTab)
+			.TabRole(ETabRole::NomadTab)
+			.Label(FText::FromString(TEXT("Easy Theme")))
+			[
+				MakeCustomizePanel()
+			];
+	}
+
+	static void OpenCustomize()
+	{
+		FGlobalTabmanager::Get()->TryInvokeTab(GCustomizeTab);
+	}
+
 }
 
 class FEasyThemeModule : public IModuleInterface
@@ -3343,10 +4081,13 @@ public:
 			GPluginDir = FPaths::ConvertRelativePathToFull(Plugin->GetBaseDir());
 		}
 		GConfig->GetBool(GConfigSection, TEXT("Dark"), GDark, GEditorSettingsIni);
+		GDev = IFileManager::Get().FileExists(*(ReportDir() / TEXT("dev.flag")));
+		LoadKeyThemes();
 		{
 			FString Look;
 			GConfig->GetString(GConfigSection, TEXT("Look"), Look, GEditorSettingsIni);
-			GCompact = Look == TEXT("Compact");
+			SelectKey(KeyThemeIndex(Look));
+			GCompact = Look == TEXT("Compact") || GKey != INDEX_NONE;
 		}
 		GConfig->GetBool(GConfigSection, TEXT("LightGraphs"), GLightGraphs, GEditorSettingsIni);
 		GConfig->GetBool(GConfigSection, TEXT("ToolbarInTabBar"), GToolbarInTitle, GEditorSettingsIni);
@@ -3359,11 +4100,12 @@ public:
 			FString Look;
 			if (GConfig->GetString(GConfigSection, TEXT("Look"), Look, GEditorPerProjectIni))
 			{
-				GCompact = Look == TEXT("Compact");
+				SelectKey(KeyThemeIndex(Look));
+				GCompact = Look == TEXT("Compact") || GKey != INDEX_NONE;
 				GDark = Look != TEXT("Light");
 			}
 		}
-		if (GDev && IFileManager::Get().FileExists(*(ReportDir() / TEXT("light.flag")))) { GDark = false; GCompact = false; }
+		if (GDev && IFileManager::Get().FileExists(*(ReportDir() / TEXT("light.flag")))) { GDark = false; GCompact = false; GKey = INDEX_NONE; }
 		if (GDev && IFileManager::Get().FileExists(*(ReportDir() / TEXT("compact.flag")))) { GCompact = true; }
 		if (GCompact) { GDark = true; }   // the Dark code paths (resources, restores) fit Unreal's colours best
 		Note(FString::Printf(TEXT("EasyTheme %s - mode %s - resources %s"), *GVersion, GDark ? TEXT("dark") : TEXT("light"), *GResDir));
@@ -3373,6 +4115,9 @@ public:
 		ArrowCursor();
 
 		MenuHandle = UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateStatic(&EasyTheme::RegisterMenus));
+		FGlobalTabmanager::Get()->RegisterNomadTabSpawner(EasyTheme::GCustomizeTab, FOnSpawnTab::CreateStatic(&EasyTheme::SpawnCustomize))
+			.SetDisplayName(FText::FromString(TEXT("Easy Theme")))
+			.SetMenuType(ETabSpawnerMenuType::Hidden);
 
 		Tickers.Add(FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([](float)
 		{
@@ -3568,6 +4313,47 @@ public:
 						return false;
 					}), 1.0f);
 				})));
+			// Customize panel, driven as the user would: open, set a key colour, drag a handle, save.
+			Cmds.Add(IConsoleManager::Get().RegisterConsoleCommand(
+				TEXT("EasyTheme.Customize"),
+				TEXT("Easy Theme (dev): EasyTheme.Customize [key 0|1|2 RRGGBB] [handle 0|1|2 value] [saveas Name] [save] [rename Name] [delete]"),
+				FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& A)
+				{
+					EasyTheme::OpenCustomize();
+					if (A.Num() >= 3 && A[0] == TEXT("key")) { EasyTheme::SetKey(FCString::Atoi(*A[1]), EasyTheme::Hex(*A[2])); }
+					else if (A.Num() >= 3 && A[0] == TEXT("handle")) { EasyTheme::SetHandle(FCString::Atoi(*A[1]), FCString::Atof(*A[2])); }
+					else if (A.Num() >= 2 && A[0] == TEXT("saveas")) { EasyTheme::SaveAs(A[1]); }
+					else if (A.Num() >= 1 && A[0] == TEXT("save")) { EasyTheme::SaveCurrent(); }
+					else if (A.Num() >= 2 && A[0] == TEXT("rename")) { EasyTheme::RenameCurrent(A[1]); }
+					else if (A.Num() >= 1 && A[0] == TEXT("shot"))
+					{
+						// The panel's own window (it opens floating), saved as panel.png.
+						const TSharedPtr<SDockTab> Tab = FGlobalTabmanager::Get()->FindExistingLiveTab(FTabId(EasyTheme::GCustomizeTab));
+						const TSharedPtr<SWindow> W = Tab.IsValid() ? Tab->GetParentWindow() : nullptr;
+						TArray<FColor> Px; FIntVector Size(0, 0, 0);
+						if (W.IsValid() && FSlateApplication::Get().TakeScreenshot(W.ToSharedRef(), Px, Size) && Px.Num())
+						{
+							for (FColor& C : Px) { C.A = 255; }
+							TArray64<uint8> Png;
+							FImageUtils::PNGCompressImageArray(Size.X, Size.Y, TArrayView64<const FColor>(Px.GetData(), Px.Num()), Png);
+							FFileHelper::SaveArrayToFile(Png, *(EasyTheme::ReportDir() / TEXT("panel.png")));
+							EasyTheme::Note(FString::Printf(TEXT("OK   shot panel.png %dx%d"), Size.X, Size.Y));
+						}
+						else { EasyTheme::Note(TEXT("MISS panel shot")); }
+					}
+					else if (A.Num() >= 1 && A[0] == TEXT("delete")) { EasyTheme::GNoDialog = true; EasyTheme::DeleteCurrent(); EasyTheme::GNoDialog = false; }
+					EasyTheme::ApplyColors(true);
+					EasyTheme::Note(FString::Printf(TEXT("panel: look %s%s | %s"), *EasyTheme::LookName(), EasyTheme::GLiveDirty ? TEXT(" *") : TEXT(""), *EasyTheme::PanelStatus().ToString()));
+				})));
+			Cmds.Add(IConsoleManager::Get().RegisterConsoleCommand(
+				TEXT("EasyTheme.TitleInactive"),
+				TEXT("Easy Theme (dev): EasyTheme.TitleInactive 1|0 - key-colour title gradient on inactive windows too (screenshots)"),
+				FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
+				{
+					EasyTheme::GTitleTestInactive = !Args.Num() || Args[0] != TEXT("0");
+					EasyTheme::ApplyColors(true);
+					FSlateApplication::Get().InvalidateAllWidgets(false);
+				})));
 			Cmds.Add(IConsoleManager::Get().RegisterConsoleCommand(
 				TEXT("EasyTheme.CBDump"),
 				TEXT("Easy Theme (dev): open Content Browser 1, then write cb_dump.txt and cb.png"),
@@ -3613,6 +4399,7 @@ public:
 		Tickers.Reset();
 		for (IConsoleObject* C : Cmds) { IConsoleManager::Get().UnregisterConsoleObject(C); }
 		Cmds.Reset();
+		if (FSlateApplication::IsInitialized()) { FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(EasyTheme::GCustomizeTab); }
 		if (UObjectInitialized())
 		{
 			UToolMenus::UnRegisterStartupCallback(MenuHandle);

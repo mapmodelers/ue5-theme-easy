@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.6
+- New look **Signal**: Compact with a green key colour (#00FF00) and a green title bar gradient, like the blue one of Dark. Buttons and selections use a deeper green so text stays readable (4.5:1).
+- New **Customize** panel (Window > Easy Theme > Customize...): make your own look from Compact with 3 key colours (Base, Accent, Text) and a levels bar (Shadows, Base, Text); changes apply live. Save As, Save, Rename, Delete; built-in looks are never overwritten. Text is kept at 4.5:1 or more on every background: it is lightened (or darkened) automatically when needed.
+- Coloured looks change Unreal's palette in memory only; Unreal's own theme files are never written. Dark, Light and Compact are unchanged.
+
 ## 0.2.5
 - Content Browser denser, in every look and everywhere it appears (Content Drawer, asset pickers): tiles keep 2 name lines instead of 3 (14 px shorter at Medium), the Add/Import/path/search rows and the item count row lose their extra padding. Tiny thumbnails are unchanged.
 

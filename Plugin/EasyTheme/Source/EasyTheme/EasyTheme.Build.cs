@@ -25,7 +25,9 @@ public class EasyTheme : ModuleRules
 			"WorkspaceMenuStructure",
 			"AssetRegistry",
 			"ContentBrowser",
-			"ContentBrowserData"
+			"ContentBrowserData",
+			"AppFramework",
+			"InputCore"
 		});
 	}
 }
