@@ -18,11 +18,16 @@ rem 2. close only this repo's test editor
 powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\_tools\close_editor.ps1" >> "%RUN%\status.txt" 2>&1
 
 rem 3. build
+rem Built outside the repo: the DLL keeps the folder it was compiled in, so that folder must not name this machine.
+set "PKG=C:\Builds\mapmodelers\EasyTheme"
+if exist "%PKG%" rmdir /s /q "%PKG%"
 if exist "%ROOT%\_build" rmdir /s /q "%ROOT%\_build"
 echo Building Easy Theme (2-5 min)...
-call "%ENGINE%\Engine\Build\BatchFiles\RunUAT.bat" BuildPlugin -Plugin="%ROOT%\Plugin\EasyTheme\EasyTheme.uplugin" -Package="%ROOT%\_build\EasyTheme" -TargetPlatforms=Win64 > "%RUN%\build.log" 2>&1
+call "%ENGINE%\Engine\Build\BatchFiles\RunUAT.bat" BuildPlugin -Plugin="%ROOT%\Plugin\EasyTheme\EasyTheme.uplugin" -Package="%PKG%" -TargetPlatforms=Win64 > "%RUN%\build.log" 2>&1
 set "BE=%errorlevel%"
 if not "%BE%"=="0" goto :buildfail
+robocopy "%PKG%" "%ROOT%\_build\EasyTheme" /MIR /XD HostProject /NFL /NDL /NJH /NJS /NP > "%RUN%\pkgcopy.log"
+if %errorlevel% GEQ 8 goto :installfail
 powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\_tools\fix_uplugin.ps1" "%ROOT%\_build\EasyTheme\EasyTheme.uplugin"
 
 rem 4. install into the test project

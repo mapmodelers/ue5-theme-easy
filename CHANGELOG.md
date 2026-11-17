@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.2.5
+- Content Browser denser, in every look and everywhere it appears (Content Drawer, asset pickers): tiles keep 2 name lines instead of 3 (14 px shorter at Medium), the Add/Import/path/search rows and the item count row lose their extra padding. Tiny thumbnails are unchanged.
+
 ## 0.2.4
 Thanks to the Reddit testers u/LeFlambeurHimself and u/LostInTheRapGame for their feedback.
 - New look **Compact** (Window > Easy Theme > Look): Unreal's own colours with the compact layout, square corners, Tahoma and all fixes. Switching to or from it applies at the next start. Asked by u/LeFlambeurHimself.

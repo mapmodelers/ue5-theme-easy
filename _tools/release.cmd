@@ -23,6 +23,9 @@ robocopy "_build\EasyTheme" "_run\pkg\EasyTheme" /E /XD Intermediate /XF *.pdb /
 copy /y "Plugin\EasyTheme\README.md" "_run\pkg\EasyTheme\README.md" >nul
 mkdir "_run\pkg\EasyTheme\Updater" 2>nul
 copy /y "_tools\updater\EasyThemeUpdate.ps1" "_run\pkg\EasyTheme\Updater\" >nul
+rem privacy: no DLL may carry this machine's folder or user names (build with go.cmd, it compiles under C:\Builds)
+powershell -NoProfile -Command "$h = @(Get-ChildItem '_run\pkg' -Recurse -Include *.dll,*.exe | Where-Object { [IO.File]::ReadAllText($_.FullName, [Text.Encoding]::GetEncoding(28591)) -match 'AdrienTriangles|\\Users\\' }); if ($h.Count) { $h.Name; exit 1 }"
+if errorlevel 1 (echo STOP: a DLL above contains a personal path - rebuild with go.cmd, nothing was published. & exit /b 1)
 if exist "%ZIP%" del "%ZIP%"
 powershell -NoProfile -Command "Compress-Archive -Path '_run\pkg\EasyTheme' -DestinationPath '%ZIP%'"
 if not exist "%ZIP%" (echo Zip failed. & exit /b 1)

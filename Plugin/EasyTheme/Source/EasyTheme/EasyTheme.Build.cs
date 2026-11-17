@@ -23,7 +23,9 @@ public class EasyTheme : ModuleRules
 			"Json",
 			"MainFrame",
 			"WorkspaceMenuStructure",
-			"AssetRegistry"
+			"AssetRegistry",
+			"ContentBrowser",
+			"ContentBrowserData"
 		});
 	}
 }

@@ -84,6 +84,10 @@
 #include "WorkspaceMenuStructureModule.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Widgets/Text/STextBlock.h"
+#include "Widgets/Layout/SBorder.h"
+#include "Widgets/Views/STableViewBase.h"
+#include "IContentBrowserSingleton.h"
+#include "SAssetView.h"
 
 #include "GenericPlatform/ICursor.h"
 #if PLATFORM_WINDOWS
@@ -891,6 +895,26 @@ namespace EasyTheme
 
 	// Compact look: only the density changes of ApplyStyles (paddings, toolbar height, menus,
 	// title row), no brush or colour.
+	// Content Browser toolbar (Add/Import, path, search rows): no vertical padding, like the other toolbars.
+	// Same in every look; the spacings Unreal writes in code are tightened on the live widgets (DenseContentBrowsers).
+	static void DenseCBStyles(const TArray<const ISlateStyle*>& Sets)
+	{
+		PatchStyle<FToolBarStyle>(Sets, TEXT("ContentBrowser.ToolBar"), [](FToolBarStyle& T)
+		{
+			if (OnceD(&T.ButtonPadding))
+			{
+				T.ButtonPadding = Shrink(T.ButtonPadding, GPadX, GPadY);
+				T.CheckBoxPadding = Shrink(T.CheckBoxPadding, GPadX, GPadY);
+				T.ComboButtonPadding = Shrink(T.ComboButtonPadding, GPadX, GPadY);
+				T.BlockPadding = Shrink(T.BlockPadding, GPadX, GPadY);
+				T.BackgroundPadding = Shrink(T.BackgroundPadding, GPadX, GPadY);
+			}
+			auto Vert = [](FMargin M, float V) { M.Top = V; M.Bottom = V; return M; };
+			T.BackgroundPadding = Vert(T.BackgroundPadding, 0.f);
+			T.BlockPadding = Vert(T.BlockPadding, 0.f);
+		});
+	}
+
 	static void ApplyCompactStyles(const TArray<const ISlateStyle*>& Sets)
 	{
 		auto Pad = [](FButtonStyle& B)
@@ -957,6 +981,7 @@ namespace EasyTheme
 			ApplyCompactStyles(CSets);
 			ClearMenuRadio(CSets);
 			SquareAll(AllStyleSets());
+			DenseCBStyles(AllStyleSets());
 			GStyleSetCount = CountStyleSets();
 			return;
 		}
@@ -1230,6 +1255,7 @@ namespace EasyTheme
 		InkThemeWhiteText(AllStyleSets(), Ink);
 		ClearMenuRadio(Sets);
 		SquareAll(AllStyleSets());   // thanks u/LostInTheRapGame
+		DenseCBStyles(AllStyleSets());
 		GStyleSetCount = CountStyleSets();
 
 		// ---- every text-entry style: typed, focused and read-only text all in the text colour
@@ -1714,6 +1740,7 @@ namespace EasyTheme
 	{
 		GStyleSetCount = CountStyleSets();
 		SquareAll(AllStyleSets());
+		DenseCBStyles(AllStyleSets());
 		if (GCompact) { return; }
 		const FFlat& F = GDark ? GDarkFlat : GLightFlat;
 		FixLightText(AllStyleSets(), FSlateColor(Hex(F.Ink)), FSlateColor(Hex(TEXT("505050"))));
@@ -2689,6 +2716,162 @@ namespace EasyTheme
 		}
 	}
 
+	// ---- Content Browser density (all browsers, the Content Drawer and asset pickers).
+	// Tiles: Unreal reserves 67 px under each thumbnail (3 name lines + class); 2 name lines are kept.
+	// Toolbar and status rows: the borders around them lose 3 px above and below.
+	static constexpr float GTileCut = 14.f;
+	static TArray<TWeakPtr<SWidget>> GDenseCB;
+	static double GCBWalkMs = 0.0;
+	static int32 GCBWalks = 0;
+	static int32 GCBWidgets = 0;
+
+	// Unreal's own test (ContentBrowserStyle.h) is private: same console variable.
+	static bool CBNewStyle()
+	{
+		static const bool bNew = []()
+		{
+			const IConsoleVariable* V = IConsoleManager::Get().FindConsoleVariable(TEXT("ContentBrowser.EnableNewStyle"));
+			return V && V->GetBool();
+		}();
+		return bNew;
+	}
+
+	// STableViewBase::GetItemWidth is protected; a member pointer named through a subclass reaches it.
+	struct FTableViewPeek : STableViewBase
+	{
+		static float ItemWidth(const STableViewBase& T) { return (T.*(&FTableViewPeek::GetItemWidth))(); }
+	};
+
+	static bool DoneCB(const TSharedRef<SWidget>& W)
+	{
+		if (GDenseCB.ContainsByPredicate([&W](const TWeakPtr<SWidget>& P) { return P.Pin() == W; })) { return true; }
+		GDenseCB.RemoveAll([](const TWeakPtr<SWidget>& P) { return !P.IsValid(); });
+		GDenseCB.Add(W);
+		return false;
+	}
+
+	static TSharedPtr<SWidget> AncestorOf(const TSharedRef<SWidget>& W, const FName Type, int32 Max)
+	{
+		TSharedPtr<SWidget> P = W->GetParentWidget();
+		for (int32 i = 0; P.IsValid() && i < Max; ++i, P = P->GetParentWidget())
+		{
+			if (P->GetType() == Type) { return P; }
+		}
+		return nullptr;
+	}
+
+	static void DenseTileView(const TSharedRef<SWidget>& W)
+	{
+		static const FName NAssetView(TEXT("SAssetView"));
+		if (DoneCB(W)) { return; }
+		const TSharedPtr<SWidget> AV = AncestorOf(W, NAssetView, 12);
+		if (!AV.IsValid()) { return; }
+		const TSharedRef<STableViewBase> TV = StaticCastSharedRef<STableViewBase>(W);
+		const TWeakPtr<STableViewBase> WeakTV = TV;
+		const TWeakPtr<SAssetView> WeakAV = StaticCastSharedPtr<SAssetView>(AV);
+		TV->SetItemHeight(TAttribute<float>::CreateLambda([WeakTV, WeakAV]()
+		{
+			const TSharedPtr<STableViewBase> T = WeakTV.Pin();
+			const TSharedPtr<SAssetView> V = WeakAV.Pin();
+			if (!T.IsValid() || !V.IsValid()) { return 100.f; }
+			// Unreal (new style): width = thumbnail + 8; height = thumbnail + 67 + 9, or thumbnail + 9 at Tiny.
+			const float Thumb = FTableViewPeek::ItemWidth(*T) - 8.f;
+			return V->IsThumbnailSizeChecked(EThumbnailSize::Tiny) ? Thumb + 9.f : Thumb + 76.f - GTileCut;
+		}));
+		if (GDev) { Note(TEXT("OK   content browser tiles: 2 name lines")); }
+	}
+
+	// The SBorder holding a toolbar (SBorder > SHorizontalBox > toolbar, or SBorder > SBox > toolbar).
+	static void DenseBarBorder(const TSharedRef<SWidget>& Bar, const TSharedRef<SWidget>& Browser)
+	{
+		static const FName NBorder(TEXT("SBorder"));
+		TSharedPtr<SWidget> P = Bar->GetParentWidget();
+		for (int32 i = 0; P.IsValid() && i < 3; ++i, P = P->GetParentWidget())
+		{
+			if (P == Browser) { return; }
+			if (P->GetType() != NBorder) { continue; }
+			if (DoneCB(P.ToSharedRef())) { return; }
+			StaticCastSharedPtr<SBorder>(P)->SetPadding(FMargin(3.f, 1.f));
+			if (GDev) { Note(TEXT("OK   content browser bar border: 3,1")); }
+			return;
+		}
+	}
+
+	static void DenseContentBrowsers()
+	{
+		if (!CBNewStyle() || !FSlateApplication::IsInitialized()) { return; }
+		// A full pass costs about 1 ms: run it 4 times a second, and at once when a window opens.
+		static double NextWalk = 0.0;
+		static int32 LastWindows = 0;
+		const TArray<TSharedRef<SWindow>> Windows = AllWindows();
+		const double Now = FPlatformTime::Seconds();
+		if (Now < NextWalk && Windows.Num() == LastWindows) { return; }
+		NextWalk = Now + 0.25;
+		LastWindows = Windows.Num();
+		static const FName NTile(TEXT("SAssetTileView")), NBrowser(TEXT("SContentBrowser")), NMulti(TEXT("SMultiBoxWidget"));
+		const double T0 = FPlatformTime::Seconds();
+		static TArray<TPair<TSharedRef<SWidget>, TSharedPtr<SWidget>>> Q;   // widget, enclosing browser
+		Q.Reset();
+		for (const TSharedRef<SWindow>& Win : Windows) { Q.Add(TPair<TSharedRef<SWidget>, TSharedPtr<SWidget>>(Win, nullptr)); }
+		for (int32 i = 0; i < Q.Num(); ++i)
+		{
+			const TSharedRef<SWidget> W = Q[i].Key;
+			TSharedPtr<SWidget> Browser = Q[i].Value;
+			const FName Type = W->GetType();
+			if (Type == NBrowser) { Browser = W; }
+			else if (Type == NTile) { DenseTileView(W); continue; }
+			else if (Type == NMulti && Browser.IsValid()) { DenseBarBorder(W, Browser.ToSharedRef()); continue; }
+			if (!W->GetVisibility().IsVisible()) { continue; }
+			FChildren* C = W->GetAllChildren();
+			if (!C) { continue; }
+			for (int32 k = 0; k < C->Num(); ++k) { Q.Add(TPair<TSharedRef<SWidget>, TSharedPtr<SWidget>>(C->GetChildAt(k), Browser)); }
+		}
+		GCBWidgets = Q.Num();
+		Q.Reset();
+		GCBWalkMs += (FPlatformTime::Seconds() - T0) * 1000.0;
+		++GCBWalks;
+	}
+
+	// Dev: the widget tree of every open Content Browser, with sizes, in cb_dump.txt.
+	static void DumpBrowserTree(const TSharedRef<SWidget>& W, int32 Depth, FString& Out, int32& Lines)
+	{
+		if (Lines > 1500 || Depth > 40) { return; }
+		const FVector2D Sz = W->GetTickSpaceGeometry().GetLocalSize();
+		FString Extra;
+		if (W->GetType() == FName(TEXT("STextBlock"))) { Extra = TEXT(" \"") + StaticCastSharedRef<STextBlock>(W)->GetText().ToString().Left(30) + TEXT("\""); }
+		Out += FString::Printf(TEXT("%s%s %.0fx%.0f%s%s\n"), *FString::ChrN(Depth, TEXT(' ')), *W->GetTypeAsString(), Sz.X, Sz.Y,
+			W->GetVisibility().IsVisible() ? TEXT("") : TEXT(" (hidden)"), *Extra);
+		++Lines;
+		FChildren* C = W->GetAllChildren();
+		if (!C) { return; }
+		const bool bItems = W->GetType() == FName(TEXT("SListPanel"));
+		for (int32 k = 0; k < C->Num() && (!bItems || k < 2); ++k) { DumpBrowserTree(C->GetChildAt(k), Depth + 1, Out, Lines); }
+	}
+
+	static void DumpContentBrowsers()
+	{
+		const int32 bNew = CBNewStyle() ? 1 : 0;
+		const double AvgMs = GCBWalks ? GCBWalkMs / GCBWalks : 0.0;
+		FString Out = FString::Printf(TEXT("new style %d; walks %d, avg %.3f ms, %d widgets\n"), bNew, GCBWalks, AvgMs, GCBWidgets);
+		for (const TSharedRef<SWindow>& Win : AllWindows())
+		{
+			TArray<TSharedRef<SWidget>> Q = { Win };
+			for (int32 i = 0; i < Q.Num(); ++i)
+			{
+				if (Q[i]->GetType() == FName(TEXT("SContentBrowser")))
+				{
+					int32 Lines = 0;
+					Out += TEXT("=== SContentBrowser\n");
+					DumpBrowserTree(Q[i], 0, Out, Lines);
+					continue;
+				}
+				if (FChildren* C = Q[i]->GetAllChildren()) { for (int32 k = 0; k < C->Num(); ++k) { Q.Add(C->GetChildAt(k)); } }
+			}
+		}
+		FFileHelper::SaveStringToFile(Out, *(ReportDir() / TEXT("cb_dump.txt")));
+		Note(TEXT("OK   cb_dump.txt written"));
+	}
+
 	static void SetToolbarInTitle(bool bOn)
 	{
 		GToolbarInTitle = bOn;
@@ -3210,6 +3393,7 @@ public:
 		Tickers.Add(FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([](float)
 		{
 			EasyTheme::FixFloatingTitleBars();
+			EasyTheme::DenseContentBrowsers();
 			return true;
 		}), 0.0f));
 
@@ -3383,6 +3567,20 @@ public:
 						W->RequestDestroyWindow();
 						return false;
 					}), 1.0f);
+				})));
+			Cmds.Add(IConsoleManager::Get().RegisterConsoleCommand(
+				TEXT("EasyTheme.CBDump"),
+				TEXT("Easy Theme (dev): open Content Browser 1, then write cb_dump.txt and cb.png"),
+				FConsoleCommandDelegate::CreateLambda([]()
+				{
+					FGlobalTabmanager::Get()->TryInvokeTab(FName(TEXT("ContentBrowserTab1")));
+					FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([](float)
+					{
+						EasyTheme::DumpContentBrowsers();
+						EasyTheme::Shot(TEXT("cb.png"));
+						EasyTheme::WriteReport();
+						return false;
+					}), 3.0f);
 				})));
 			Cmds.Add(IConsoleManager::Get().RegisterConsoleCommand(
 				TEXT("EasyTheme.Panes"),
