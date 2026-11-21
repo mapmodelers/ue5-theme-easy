@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.2.7
+- Compact is now the default look for new installs and after Remove Saved Settings (Window > Easy Theme). A look you already chose is kept, Light from versions before 0.2.4 included.
+
 ## 0.2.6
 - New look **Signal**: Compact with a green key colour (#00FF00) and a green title bar gradient, like the blue one of Dark. Buttons and selections use a deeper green so text stays readable (4.5:1).
 - New **Customize** panel (Window > Easy Theme > Customize...): make your own look from Compact with 3 key colours (Base, Accent, Text) and a levels bar (Shadows, Base, Text); changes apply live. Save As, Save, Rename, Delete; built-in looks are never overwritten. Text is kept at 4.5:1 or more on every background: it is lightened (or darkened) automatically when needed.

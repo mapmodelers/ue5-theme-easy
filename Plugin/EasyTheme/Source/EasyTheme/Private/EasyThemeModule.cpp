@@ -2096,7 +2096,7 @@ namespace EasyTheme
 		GConfig->RemoveKey(GConfigSection, TEXT("Dark"), GEditorSettingsIni);
 		GConfig->RemoveKey(GConfigSection, TEXT("ToolbarInTabBar"), GEditorSettingsIni);
 		GConfig->RemoveKey(GConfigSection, TEXT("HideHomeTab"), GEditorSettingsIni);
-		GConfig->RemoveKey(GConfigSection, TEXT("Look"), GEditorSettingsIni);
+		GConfig->RemoveKey(GConfigSection, TEXT("Look"), GEditorSettingsIni); GConfig->RemoveKey(GConfigSection, TEXT("Dark"), GEditorSettingsIni);
 		{
 			const bool bKeep = GHideHome;
 			GHideHome = false;
@@ -2476,7 +2476,7 @@ namespace EasyTheme
 		FToolMenuSection& Look = Sub->AddSection("EasyThemeLook", FText::FromString(TEXT("Look")));
 		Look.AddMenuEntry("EasyThemeDark",
 			FText::FromString(TEXT("Dark")),
-			FText::FromString(TEXT("Dark look (default).")),
+			FText::FromString(TEXT("Dark look.")),
 			FSlateIcon(),
 			FUIAction(FExecuteAction::CreateLambda([]() { SetLook(TEXT("Dark")); }), FCanExecuteAction(),
 				FIsActionChecked::CreateLambda([]() { return GDark && !GCompact; })),
@@ -2490,7 +2490,7 @@ namespace EasyTheme
 			EUserInterfaceActionType::RadioButton);
 		Look.AddMenuEntry("EasyThemeCompact",
 			FText::FromString(TEXT("Compact")),
-			FText::FromString(TEXT("Unreal's own colours with the compact layout, square corners and fixes. Applied when Unreal starts.")),
+			FText::FromString(TEXT("Default look. Unreal's own colours with the compact layout, square corners and fixes. Applied when Unreal starts.")),
 			FSlateIcon(),
 			FUIAction(FExecuteAction::CreateLambda([]() { SetLook(TEXT("Compact")); }), FCanExecuteAction(),
 				FIsActionChecked::CreateLambda([]() { return GCompact && GKey == INDEX_NONE; })),
@@ -4085,7 +4085,7 @@ public:
 		LoadKeyThemes();
 		{
 			FString Look;
-			GConfig->GetString(GConfigSection, TEXT("Look"), Look, GEditorSettingsIni);
+			if (!GConfig->GetString(GConfigSection, TEXT("Look"), Look, GEditorSettingsIni) || Look.IsEmpty()) { bool bOld = true; Look = GConfig->GetBool(GConfigSection, TEXT("Dark"), bOld, GEditorSettingsIni) ? (bOld ? TEXT("Dark") : TEXT("Light")) : TEXT("Compact"); }   // nothing chosen yet: Compact (before 0.2.4 only Dark was saved)
 			SelectKey(KeyThemeIndex(Look));
 			GCompact = Look == TEXT("Compact") || GKey != INDEX_NONE;
 		}
